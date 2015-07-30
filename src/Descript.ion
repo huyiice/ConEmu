@@ -1,5 +1,9 @@
+build.prj.bat {prj_file} {config} {platform}
+build.prj12.bat {prj_file} {config} {platform}
+build.prj14.bat {prj_file} {config} {platform}
+build.prj9.bat {prj_file} {config} {platform}
 CE.sln VC2008
 CE10.sln VC2010
 CE11.sln VC2012
 CE12.sln VC2013
-CE14.sln VC2014
+CE14.sln VC2015

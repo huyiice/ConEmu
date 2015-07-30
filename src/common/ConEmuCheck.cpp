@@ -221,7 +221,7 @@ BOOL IsProcessDebugged(DWORD nPID)
 #endif
 
 // nTimeout - таймаут подключения
-HANDLE ExecuteOpenPipe(const wchar_t* szPipeName, wchar_t (&szErr)[MAX_PATH*2], const wchar_t* szModule, DWORD nServerPID, DWORD nTimeout, BOOL Overlapped /*= FALSE*/, HANDLE hStop /*= NULL*/)
+HANDLE ExecuteOpenPipe(const wchar_t* szPipeName, wchar_t (&szErr)[MAX_PATH*2], const wchar_t* szModule, DWORD nServerPID, DWORD nTimeout, BOOL Overlapped /*= FALSE*/, HANDLE hStop /*= NULL*/, BOOL bIgnoreAbsence /*= FALSE*/)
 {
 	HANDLE hPipe = NULL;
 	DWORD dwErr = 0, dwMode = 0;
@@ -327,7 +327,8 @@ HANDLE ExecuteOpenPipe(const wchar_t* szPipeName, wchar_t (&szErr)[MAX_PATH*2], 
 			          ModuleName(szModule), GetCurrentProcessId(), szPipeName, dwErr,
 			          (nTries <= 0) ? L", Tries" : L"", (nDuration > nOpenPipeTimeout) ? L", Duration" : L"");
 			//_ASSERTEX(FALSE && "Pipe open failed with timeout!");
-			int iBtn = MessageBox(NULL, szErr, L"Pipe open failed with timeout!", MB_ICONSTOP|MB_SYSTEMMODAL|MB_RETRYCANCEL);
+			int iBtn = bIgnoreAbsence ? IDCANCEL
+				: MessageBox(NULL, szErr, L"Pipe open failed with timeout!", MB_ICONSTOP|MB_SYSTEMMODAL|MB_RETRYCANCEL);
 			if (iBtn == IDRETRY)
 			{
 				nTries = nDefaultTries;
@@ -512,7 +513,7 @@ BOOL LoadSrvMapping(HWND hConWnd, CESERVER_CONSOLE_MAPPING_HDR& SrvMapping)
 		return FALSE;
 
 	MFileMapping<CESERVER_CONSOLE_MAPPING_HDR> SrvInfoMapping;
-	SrvInfoMapping.InitName(CECONMAPNAME, (DWORD)hConWnd); //-V205
+	SrvInfoMapping.InitName(CECONMAPNAME, LODWORD(hConWnd));
 	const CESERVER_CONSOLE_MAPPING_HDR* pInfo = SrvInfoMapping.Open();
 	if (!pInfo)
 		return FALSE;
@@ -708,7 +709,7 @@ CESERVER_REQ* ExecuteGuiCmd(HWND hConWnd, CESERVER_REQ* pIn, HWND hOwner, BOOL b
 
 	DWORD nLastErr = GetLastError();
 	//_wsprintf(szGuiPipeName, SKIPLEN(countof(szGuiPipeName)) CEGUIPIPENAME, L".", (DWORD)hConWnd);
-	msprintf(szGuiPipeName, countof(szGuiPipeName), CEGUIPIPENAME, L".", (DWORD)hConWnd); //-V205
+	msprintf(szGuiPipeName, countof(szGuiPipeName), CEGUIPIPENAME, L".", LODWORD(hConWnd));
 
 	#ifdef _DEBUG
 	DWORD nStartTick = GetTickCount();
@@ -757,7 +758,7 @@ CESERVER_REQ* ExecuteSrvCmd(DWORD dwSrvPID, CESERVER_REQ* pIn, HWND hOwner, BOOL
 }
 
 // Выполнить в ConEmuHk
-CESERVER_REQ* ExecuteHkCmd(DWORD dwHkPID, CESERVER_REQ* pIn, HWND hOwner, BOOL bAsyncNoResult /*= FALSE*/)
+CESERVER_REQ* ExecuteHkCmd(DWORD dwHkPID, CESERVER_REQ* pIn, HWND hOwner, BOOL bAsyncNoResult /*= FALSE*/, BOOL bIgnoreAbsence /*= FALSE*/)
 {
 	wchar_t szPipeName[128];
 
@@ -767,7 +768,7 @@ CESERVER_REQ* ExecuteHkCmd(DWORD dwHkPID, CESERVER_REQ* pIn, HWND hOwner, BOOL b
 	DWORD nLastErr = GetLastError();
 	//_wsprintf(szPipeName, SKIPLEN(countof(szPipeName)) CESERVERPIPENAME, L".", (DWORD)dwSrvPID);
 	msprintf(szPipeName, countof(szPipeName), CEHOOKSPIPENAME, L".", (DWORD)dwHkPID);
-	CESERVER_REQ* lpRet = ExecuteCmd(szPipeName, pIn, 1000, hOwner, bAsyncNoResult);
+	CESERVER_REQ* lpRet = ExecuteCmd(szPipeName, pIn, 1000, hOwner, bAsyncNoResult, dwHkPID, bIgnoreAbsence);
 	SetLastError(nLastErr); // Чтобы не мешать процессу своими возможными ошибками общения с пайпом
 	return lpRet;
 }
@@ -781,7 +782,7 @@ CESERVER_REQ* ExecuteHkCmd(DWORD dwHkPID, CESERVER_REQ* pIn, HWND hOwner, BOOL b
 //WARNING!!!
 //   Эта процедура не может получить с сервера более 600 байт данных!
 // В заголовке hOwner в дебаге может быть отображена ошибка
-CESERVER_REQ* ExecuteCmd(const wchar_t* szPipeName, CESERVER_REQ* pIn, DWORD nWaitPipe, HWND hOwner, BOOL bAsyncNoResult, DWORD nServerPID)
+CESERVER_REQ* ExecuteCmd(const wchar_t* szPipeName, CESERVER_REQ* pIn, DWORD nWaitPipe, HWND hOwner, BOOL bAsyncNoResult, DWORD nServerPID, BOOL bIgnoreAbsence /*= FALSE*/)
 {
 	CESERVER_REQ* pOut = NULL;
 	HANDLE hPipe = NULL;
@@ -813,7 +814,7 @@ CESERVER_REQ* ExecuteCmd(const wchar_t* szPipeName, CESERVER_REQ* pIn, DWORD nWa
 
 	_ASSERTE(pIn->hdr.nSrcPID && pIn->hdr.nSrcThreadId);
 	_ASSERTE(pIn->hdr.cbSize >= sizeof(pIn->hdr));
-	hPipe = ExecuteOpenPipe(szPipeName, szErr, NULL/*Сюда хорошо бы имя модуля подкрутить*/, nServerPID, nWaitPipe);
+	hPipe = ExecuteOpenPipe(szPipeName, szErr, NULL/*Сюда хорошо бы имя модуля подкрутить*/, nServerPID, nWaitPipe, FALSE, NULL, bIgnoreAbsence);
 
 	if (hPipe == NULL || hPipe == INVALID_HANDLE_VALUE)
 	{
@@ -1169,7 +1170,7 @@ HWND GetConEmuHWND(int aiType)
 
 		CESERVER_CONSOLE_MAPPING_HDR* p = NULL;
 
-		msprintf(szGuiPipeName, cchMax, CECONMAPNAME, (DWORD)FarHwnd); //-V205
+		msprintf(szGuiPipeName, cchMax, CECONMAPNAME, LODWORD(FarHwnd));
 		#ifdef _DEBUG
 		size_t nSize = sizeof(*p);
 		#endif
@@ -1302,7 +1303,7 @@ int GuiMessageBox(HWND hConEmuWndRoot, LPCWSTR asText, LPCWSTR asTitle, int anBt
 		_wcscpyn_c(pIn->AssertInfo.szDebugInfo, countof(pIn->AssertInfo.szDebugInfo), asText, countof(pIn->AssertInfo.szDebugInfo)); //-V501
 
 		wchar_t szGuiPipeName[128];
-		msprintf(szGuiPipeName, countof(szGuiPipeName), CEGUIPIPENAME, L".", (DWORD)hConEmuWndRoot); //-V205
+		msprintf(szGuiPipeName, countof(szGuiPipeName), CEGUIPIPENAME, L".", LODWORD(hConEmuWndRoot));
 
 		CESERVER_REQ* pOut = ExecuteCmd(szGuiPipeName, pIn, 1000, hConWnd);
 

@@ -841,13 +841,14 @@
     <ClInclude Include="..\common\WConsole.h" />
     <ClInclude Include="..\common\WFiles.h" />
     <ClInclude Include="..\common\WObjects.h" />
+    <ClInclude Include="..\common\WThreads.h" />
     <ClInclude Include="..\common\WUser.h" />
     <ClInclude Include="..\ConEmuHk\Injects.h" />
     <ClInclude Include="ConEmuC.h" />
     <ClInclude Include="ConProcess.h" />
     <ClInclude Include="ConsoleHelp.h" />
     <ClInclude Include="Debugger.h" />
-    <ClInclude Include="Downloader.h" />
+    <ClInclude Include="DownloaderCall.h" />
     <ClInclude Include="ExitCodes.h" />
     <ClInclude Include="GuiHooks.h" />
     <ClInclude Include="Queue.h" />
@@ -1163,6 +1164,7 @@
     <ClCompile Include="..\common\WConsole.cpp" />
     <ClCompile Include="..\common\WFiles.cpp" />
     <ClCompile Include="..\common\WObjects.cpp" />
+    <ClCompile Include="..\common\WThreads.cpp" />
     <ClCompile Include="..\common\WUser.cpp" />
     <ClCompile Include="..\ConEmuHk\Injects.cpp" />
     <ClCompile Include="ConEmuCmd.cpp" />
@@ -1170,7 +1172,7 @@
     <ClCompile Include="ConProcess.cpp" />
     <ClCompile Include="ConsoleMain.cpp" />
     <ClCompile Include="Debugger.cpp" />
-    <ClCompile Include="Downloader.cpp" />
+    <ClCompile Include="DownloaderCall.cpp" />
     <ClCompile Include="GuiHooks.cpp" />
     <ClCompile Include="InjectRemote.cpp" />
     <ClCompile Include="Queue.cpp" />

@@ -287,6 +287,8 @@ class CRealConsole
 		BYTE    m_ConsoleKeyShortcuts;
 		BYTE    mn_TextColorIdx, mn_BackColorIdx, mn_PopTextColorIdx, mn_PopBackColorIdx;
 		void    PrepareDefaultColors(BYTE& nTextColorIdx, BYTE& nBackColorIdx, BYTE& nPopTextColorIdx, BYTE& nPopBackColorIdx, bool bUpdateRegistry = false, HKEY hkConsole = NULL);
+	public:
+		void    PrepareDefaultColors();
 	private:
 		// ChildGui related
 		struct {
@@ -388,6 +390,7 @@ class CRealConsole
 		bool PostConsoleEventPipe(MSG64 *pMsg, size_t cchCount = 1);
 		void ShowKeyBarHint(WORD nID);
 		bool PostPromptCmd(bool CD, LPCWSTR asCmd);
+		void OnKeysSending();
 	private:
 		bool PostString(wchar_t* pszChars, size_t cchCount);
 		//void TranslateKeyPress(WORD vkKey, DWORD dwControlState, wchar_t wch, int ScanCode, INPUT_RECORD& rDown, INPUT_RECORD& rUp);
@@ -555,6 +558,8 @@ class CRealConsole
 		void RenameWindow(LPCWSTR asNewWindowText = NULL);
 		int GetTabCount(BOOL abVisibleOnly = FALSE);
 		int GetRootProcessIcon();
+		LPCWSTR GetRootProcessName();
+		void NeedRefreshRootProcessIcon();
 		int GetActiveTab();
 		CEFarWindowType GetActiveTabType();
 		bool GetTab(int tabIdx, /*OUT*/ CTab& rTab);
@@ -759,6 +764,7 @@ class CRealConsole
 		bool ReloadFarWorkDir();
 		//wchar_t ms_ProfilePathTemp[MAX_PATH+1]; -- commented code
 		bool mb_WasStartDetached;
+		SYSTEMTIME mst_ServerStartingTime;
 		void SetRootProcessName(LPCWSTR asProcessName);
 		wchar_t ms_RootProcessName[MAX_PATH];
 		int mn_RootProcessIcon;

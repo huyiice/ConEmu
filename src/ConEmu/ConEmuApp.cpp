@@ -37,7 +37,9 @@ THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #pragma warning(default: 4091)
 #include <tlhelp32.h>
 #if !defined(__GNUC__) || defined(__MINGW32__)
+#pragma warning(disable: 4091)
 #include <dbghelp.h>
+#pragma warning(default: 4091)
 #include <shobjidl.h>
 #include <propkey.h>
 #include <taskschd.h>
@@ -77,7 +79,7 @@ THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #define DEBUGSTRMOVE(s) //DEBUGSTR(s)
 #define DEBUGSTRTIMER(s) //DEBUGSTR(s)
 #define DEBUGSTRSETHOTKEY(s) //DEBUGSTR(s)
-#define DEBUGSTRSHUTSTEP(s) //DEBUGSTR(s)
+#define DEBUGSTRSHUTSTEP(s) DEBUGSTR(s)
 #define DEBUGSTRSTARTUP(s) DEBUGSTR(WIN3264TEST(L"ConEmu.exe: ",L"ConEmu64.exe: ") s L"\n")
 #define DEBUGSTRSTARTUPLOG(s) {if (gpConEmu) gpConEmu->LogString(s);} DEBUGSTRSTARTUP(s)
 
@@ -2048,7 +2050,7 @@ BOOL CheckCreateAppWindow()
 	if (gpSetCls->isAdvLogging)
 	{
 		wchar_t szCreated[128];
-		_wsprintf(szCreated, SKIPLEN(countof(szCreated)) L"App window created, HWND=0x%08X\r\n", (DWORD)ghWndApp);
+		_wsprintf(szCreated, SKIPLEN(countof(szCreated)) L"App window created, HWND=0x%08X\r\n", LODWORD(ghWndApp));
 		gpConEmu->LogString(szCreated, false, false);
 	}
 
@@ -2140,7 +2142,7 @@ void SkipOneShowWindow()
 		if (gpSetCls->isAdvLogging)
 		{
 			wchar_t szInfo[128];
-			_wsprintf(szInfo, SKIPLEN(countof(szInfo)) L"Skip window 0x%08X was created and destroyed", (DWORD)hSkip);
+			_wsprintf(szInfo, SKIPLEN(countof(szInfo)) L"Skip window 0x%08X was created and destroyed", LODWORD(hSkip));
 			gpConEmu->LogString(szInfo);
 		}
 	}
@@ -2438,7 +2440,7 @@ void MessageLoop()
 		#ifdef _DEBUG
 		if (Msg.message == WM_TIMER)
 		{
-			_wsprintf(szDbg, SKIPLEN(countof(szDbg)) L"WM_TIMER(0x%08X,%u)\n", (DWORD)Msg.hwnd, Msg.wParam);
+			_wsprintf(szDbg, SKIPLEN(countof(szDbg)) L"WM_TIMER(0x%08X,%u)\n", LODWORD(Msg.hwnd), Msg.wParam);
 			DEBUGSTRTIMER(szDbg);
 		}
 		#endif
@@ -2485,185 +2487,6 @@ bool isMainThread()
 {
 	DWORD dwTID = GetCurrentThreadId();
 	return (dwTID == gn_MainThreadId);
-}
-
-/* С командной строкой (GetCommandLineW) у нас засада */
-/*
-
-ShellExecute("open", "ShowArg.exe", "\"test1\" test2");
-GetCommandLineW(): "T:\XChange\VCProject\TestRunArg\ShowArg.exe" "test1" test2
-
-CreateProcess("ShowArg.exe", "\"test1\" test2");
-GetCommandLineW(): "test1" test2
-
-CreateProcess(NULL, "\"ShowArg.exe\" \"test1\" test2");
-GetCommandLineW(): "ShowArg.exe" "test1" test2
-
-*/
-
-//Result:
-//  cmdLine - указатель на буфер с аргументами (!) он будет освобожден через free(cmdLine)
-//  cmdNew  - то что запускается (после аргумента /cmd)
-//  params  - количество аргументов
-//            0 - ком.строка пустая
-//            ((uint)-1) - весь cmdNew должен быть ПРИКЛЕЕН к строке запуска по умолчанию
-BOOL PrepareCommandLine(TCHAR*& cmdLine, TCHAR*& cmdNew, bool& isScript, uint& params)
-{
-	params = 0;
-	cmdNew = NULL;
-	isScript = false;
-
-	LPCWSTR pszCmdLine = GetCommandLine();
-	int nInitLen = _tcslen(pszCmdLine);
-	cmdLine = lstrdup(pszCmdLine);
-	// Имя исполняемого файла (conemu.exe)
-	const wchar_t* pszExeName = PointToName(gpConEmu->ms_ConEmuExe);
-	wchar_t* pszExeNameOnly = lstrdup(pszExeName);
-	wchar_t* pszDot = (wchar_t*)PointToExt(pszExeNameOnly);
-	_ASSERTE(pszDot);
-	if (pszDot) *pszDot = 0;
-
-	wchar_t *pszNext = NULL, *pszStart = NULL, chSave = 0;
-
-	if (*cmdLine == L' ')
-	{
-		// Исполняемого файла нет - сразу начинаются аргументы
-		pszNext = NULL;
-	}
-	else if (*cmdLine == L'"')
-	{
-		// Имя между кавычками
-		pszStart = cmdLine+1;
-		pszNext = wcschr(pszStart, L'"');
-
-		if (!pszNext)
-		{
-			MBoxA(L"Invalid command line: quotes are not balanced");
-			return FALSE;
-		}
-
-		chSave = *pszNext;
-		*pszNext = 0;
-	}
-	else
-	{
-		pszStart = cmdLine;
-		pszNext = wcschr(pszStart, L' ');
-
-		if (!pszNext) pszNext = pszStart + _tcslen(pszStart);
-
-		chSave = *pszNext;
-		*pszNext = 0;
-	}
-
-	if (pszNext)
-	{
-		wchar_t* pszFN = wcsrchr(pszStart, L'\\');
-		if (pszFN) pszFN++; else pszFN = pszStart;
-
-		// Если первый параметр - наш conemu.exe или его путь - нужно его выбросить
-		if (!lstrcmpi(pszFN, pszExeName) || !lstrcmpi(pszFN, pszExeNameOnly))
-		{
-			// Нужно отрезать
-			INT_PTR nCopy = (nInitLen - (pszNext - cmdLine)) * sizeof(wchar_t);
-			TODO("Проверить, чтобы длину корректно посчитать");
-
-			if (nCopy > 0)
-				memmove(cmdLine, pszNext+1, nCopy);
-			else
-				*cmdLine = 0;
-		}
-		else
-		{
-			*pszNext = chSave;
-		}
-	}
-
-	// AI. Если первый аргумент начинается НЕ с '/' - считаем что эта строка должна полностью передаваться в
-	// запускаемую программу (прилепляться к концу ком.строки по умолчанию)
-	pszStart = cmdLine;
-
-	while (*pszStart == L' ' || *pszStart == L'"') pszStart++;  // пропустить пробелы и кавычки
-
-	if (*pszStart == 0)
-	{
-		params = 0;
-		*cmdLine = 0;
-		cmdNew = NULL;
-		// Эта переменная нужна для того, чтобы conemu можно было перезапустить
-		// из cmd файла с теми же аргументами (selfupdate)
-		SetEnvironmentVariableW(L"ConEmuArgs", L"");
-	}
-	else
-	{
-		// Эта переменная нужна для того, чтобы conemu можно было перезапустить
-		// из cmd файла с теми же аргументами (selfupdate)
-		gpConEmu->mpsz_ConEmuArgs = lstrdup(SkipNonPrintable(cmdLine));
-		SetEnvironmentVariableW(L"ConEmuArgs", gpConEmu->mpsz_ConEmuArgs);
-
-		// Теперь проверяем наличие слеша
-		if (*pszStart != L'/' && *pszStart != L'-' && !wcschr(pszStart, L'/'))
-		{
-			params = (uint)-1;
-			cmdNew = cmdLine;
-		}
-		else
-		{
-			CEStr lsArg;
-			wchar_t* pszSrc = cmdLine;
-			wchar_t* pszDst = cmdLine;
-			wchar_t* pszArgStart = NULL;
-			params = 0;
-			// Strip quotes, de-escape arguments
-			while (0 == NextArg((const wchar_t**)&pszSrc, lsArg, (const wchar_t**)&pszArgStart))
-			{
-				// If command line contains "/cmd" - the trailer is used (without changes!) to create new process
-				// Optional "/cmdlist cmd1 | cmd2 | ..." can be used to start bunch of consoles at once
-				if ((lsArg.ms_Arg[0] == L'-') || (lsArg.ms_Arg[0] == L'/'))
-				{
-					if (lstrcmpi(lsArg.ms_Arg+1, L"cmd") == 0)
-					{
-						cmdNew = (wchar_t*)SkipNonPrintable(pszSrc);
-						*pszDst = 0;
-						break;
-					}
-					else if (lstrcmpi(lsArg.ms_Arg+1, L"cmdlist") == 0)
-					{
-						isScript = true;
-						cmdNew = (wchar_t*)SkipNonPrintable(pszSrc);
-						*pszDst = 0;
-						break;
-					}
-				}
-
-				// Historically. Command line was splitted into "Arg1\0Arg2\0Arg3\0\0"
-				int iLen = lstrlen(lsArg.ms_Arg);
-				wmemcpy(pszDst, lsArg.ms_Arg, iLen+1); // Include trailing zero
-				pszDst += iLen+1;
-				params++;
-			}
-		}
-	}
-	SafeFree(pszExeNameOnly);
-
-	return TRUE;
-}
-
-void ResetConman()
-{
-	HKEY hk = 0;
-	DWORD dw = 0;
-
-	// 24.09.2010 Maks - Только если ключ конмана уже создан!
-	// сбросить CreateInNewEnvironment для ConMan
-	//if (0 == RegCreateKeyEx(HKEY_CURRENT_USER, _T("Software\\HoopoePG_2x"),
-	//        NULL, NULL, NULL, KEY_ALL_ACCESS, NULL, &hk, &dw))
-	if (0 == RegOpenKeyEx(HKEY_CURRENT_USER, _T("Software\\HoopoePG_2x"), 0, KEY_ALL_ACCESS, &hk))
-	{
-		RegSetValueEx(hk, _T("CreateInNewEnvironment"), 0, REG_DWORD,
-		              (LPBYTE)&(dw=0), sizeof(dw));
-		RegCloseKey(hk);
-	}
 }
 
 HWND FindTopExplorerWindow()
@@ -3266,46 +3089,93 @@ bool UpdateWin7TaskList(bool bForce, bool bNoSuccMsg /*= false*/)
 	return bSucceeded;
 }
 
-bool GetCfgParm(uint& i, TCHAR*& curCommand, bool& Prm, TCHAR*& Val, int nMaxLen, bool bExpandAndDup = false)
+// Set our unique application-defined Application User Model ID for Windows 7 TaskBar
+HRESULT UpdateAppUserModelID()
 {
-	if (!curCommand || !*curCommand)
+	bool bSpecialXmlFile = false;
+	LPCWSTR pszConfigFile = gpConEmu->ConEmuXml(&bSpecialXmlFile);
+	LPCWSTR pszConfigName = gpSetCls->GetConfigName();
+
+	// Don't change the ID if application was started without arguments changing:
+	// ‘config-name’, ‘config-file’, ‘registry-use’ or ‘basic-settings’.
+	if (!gpSetCls->isResetBasicSettings
+		&& !gpConEmu->opt.ForceUseRegistryPrm
+		&& !bSpecialXmlFile
+		&& !(pszConfigName && *pszConfigName)
+		)
 	{
-		_ASSERTE(curCommand && *curCommand);
-		return false;
+		LogString(L"AppUserModelID was not changed due to special switches absence");
+		return S_FALSE;
 	}
 
-	// Сохраним, может для сообщения об ошибке понадобится
-	TCHAR* pszName = curCommand;
+	// The MSDN says: An application must provide its AppUserModelID in the following form.
+	// It can have no more than 128 characters and cannot contain spaces. Each section should be camel-cased.
+	//    CompanyName.ProductName.SubProduct.VersionInformation
+	// CompanyName and ProductName should always be used, while the SubProduct and VersionInformation portions are optional
 
-	curCommand += _tcslen(curCommand) + 1; i++;
-
-	int nLen = _tcslen(curCommand);
-
-	if (nLen >= nMaxLen)
+	CEStr Config;
+	CEStr lsTempBuf;
+	if (gpSetCls->isResetBasicSettings)
 	{
-		int nCchSize = nLen+100+_tcslen(pszName);
-		wchar_t* psz = (wchar_t*)calloc(nCchSize,sizeof(wchar_t));
-		if (psz)
-		{
-			_wsprintf(psz, SKIPLEN(nCchSize) L"Too long %s value (%i chars).\r\n", pszName, nLen);
-			_wcscat_c(psz, nCchSize, curCommand);
-			MBoxA(psz);
-			free(psz);
-		}
-		//free(cmdLine);
-		return false;
+		Config.Set(L".Basic");
 	}
-
-	// Ok
-	Prm = true;
-
-	// We need independent absolute file paths, Working dir changes during ConEmu session
-	if (bExpandAndDup)
-		Val = GetFullPathNameEx(curCommand);
+	else if (gpConEmu->opt.ForceUseRegistryPrm)
+	{
+		Config.Set(L".Registry");
+	}
 	else
-		Val = curCommand;
+	{
+		if (bSpecialXmlFile && pszConfigFile && *pszConfigFile)
+		{
+			lstrmerge(&lsTempBuf.ms_Arg, L".", pszConfigFile);
+		}
+		else
+		{
+			lsTempBuf.Set(L".Xml");
+		}
+		// Named configuration?
+		if (pszConfigName && *pszConfigName)
+		{
+			lstrmerge(&lsTempBuf.ms_Arg, L".", pszConfigName);
+		}
+		// Prepare the string
+		if (lsTempBuf.ms_Arg)
+		{
+			// Must not contain spaces (and may be some others? not mentioned but...)
+			wchar_t* pch = lsTempBuf.ms_Arg;
+			while ((pch = wcspbrk(pch+1, L".,\\/ :()")) != NULL)
+				*pch = L'$';
+			// lsTempBuf must not be longer than 110 chars
+			int iLen = lstrlen(lsTempBuf.ms_Arg);
+			LPCWSTR pszReady = (iLen <= 110) ? lsTempBuf.ms_Arg : (lsTempBuf.ms_Arg + iLen - 110);
+			Config.Set(pszReady);
+		}
+	}
+	CEStr AppID = lstrmerge(L"Maximus5.ConEmu", Config.ms_Arg);
 
-	return true;
+	// And update it
+	HRESULT hr = E_NOTIMPL;
+	typedef HRESULT (WINAPI* SetCurrentProcessExplicitAppUserModelID_t)(PCWSTR AppID);
+	HMODULE hShell = GetModuleHandle(L"Shell32.dll");
+	SetCurrentProcessExplicitAppUserModelID_t fnSetAppUserModelID = hShell
+		? (SetCurrentProcessExplicitAppUserModelID_t)GetProcAddress(hShell, "SetCurrentProcessExplicitAppUserModelID")
+		: NULL;
+	if (fnSetAppUserModelID)
+	{
+		hr = fnSetAppUserModelID(AppID);
+		_ASSERTE(hr == S_OK);
+	}
+
+	// Log the change
+	INT_PTR cchMax = lstrlen(AppID)+128;
+	wchar_t* pszLog = lsTempBuf.GetBuffer(cchMax);
+	if (pszLog)
+	{
+		_wsprintf(pszLog, SKIPLEN(cchMax) L"AppUserModelID was changed to `%s` Result=x%08X", AppID.ms_Arg, (DWORD)hr);
+		LogString(pszLog);
+	}
+
+	return hr;
 }
 
 bool CheckLockFrequentExecute(DWORD& Tick, DWORD Interval)
@@ -3641,40 +3511,12 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 	ghDbgHook = SetWindowsHookEx(WH_CALLWNDPROC, DbgCallWndProc, NULL, GetCurrentThreadId());
 #endif
 
-
-	//pVCon = NULL;
-	//bool setParentDisabled=false;
-	bool ClearTypePrm = false; LONG ClearTypeVal = CLEARTYPE_NATURAL_QUALITY;
-	bool FontPrm = false; TCHAR* FontVal = NULL;
-	bool IconPrm = false;
-	bool SizePrm = false; LONG SizeVal = 0;
-	bool BufferHeightPrm = false; int BufferHeightVal = 0;
-	bool ConfigPrm = false; TCHAR* ConfigVal = NULL;
-	bool PalettePrm = false; TCHAR* PaletteVal = NULL;
-	//bool FontFilePrm = false; TCHAR* FontFile = NULL; //ADD fontname; by Mors
-	bool WindowPrm = false; int WindowModeVal = 0;
-	bool ForceUseRegistryPrm = false;
-	bool LoadCfgFilePrm = false; TCHAR* LoadCfgFile = NULL;
-	bool SaveCfgFilePrm = false; TCHAR* SaveCfgFile = NULL;
-	bool UpdateSrcSetPrm = false; TCHAR* UpdateSrcSet = NULL;
-	bool AnsiLogPathPrm = false; TCHAR* AnsiLogPath = NULL;
-	bool GuiMacroPrm = false; TCHAR* ExecGuiMacro = NULL;
-	bool QuakePrm = false; BYTE QuakeMode = 0;
-	bool SizePosPrm = false; TCHAR *sWndX = NULL, *sWndY = NULL, *sWndW = NULL, *sWndH = NULL;
-	bool SetUpDefaultTerminal = false;
-	bool ExitAfterActionPrm = false;
-#if 0
-	//120714 - аналогичные параметры работают в ConEmuC.exe, а в GUI они и не работали. убрал пока
-	bool AttachPrm = false; LONG AttachVal=0;
-#endif
-	bool MultiConPrm = false, MultiConValue = false;
-	bool VisPrm = false, VisValue = false;
-	bool ResetSettings = false;
-	//bool SingleInstance = false;
-
 	_ASSERTE(gpSetCls->SingleInstanceArg == sgl_Default);
 	gpSetCls->SingleInstanceArg = sgl_Default;
 	gpSetCls->SingleInstanceShowHide = sih_None;
+
+	CEStr szReady;
+	bool  ReqSaveHistory = false;
 
 	//gpConEmu->cBlinkShift = GetCaretBlinkTime()/15;
 	//memset(&gOSVer, 0, sizeof(gOSVer));
@@ -3692,777 +3534,22 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 	//	CheckConIme();
 	//}
 	//gpSet->InitSettings();
-//------------------------------------------------------------------------
-///| Parsing the command line |///////////////////////////////////////////
-//------------------------------------------------------------------------
-	TCHAR* cmdNew = NULL;
-	TCHAR *cmdLine = NULL;
-	TCHAR *psUnknown = NULL;
-	CEStr szReady;
-	uint  params = 0;
-	bool  isScript = false;
-	bool  ReqSaveHistory = false;
 
-	DEBUGSTRSTARTUP(L"Parsing command line");
-
-	// [OUT] params = (uint)-1, если первый аргумент не начинается с '/'
-	// т.е. комстрока такая "ConEmu.exe c:\tools\far.exe",
-	// а не такая "ConEmu.exe /cmd c:\tools\far.exe",
-	if (!PrepareCommandLine(/*OUT*/cmdLine, /*OUT*/cmdNew, /*OUT*/isScript, /*OUT*/params))
-		return 100;
-
-	if (params && params != (uint)-1)
+	int iParseRc = 0;
+	if (!gpConEmu->ParseCommandLine(GetCommandLine(), iParseRc))
 	{
-		TCHAR *curCommand = cmdLine;
-		TODO("Если первый (после запускаемого файла) аргумент начинается НЕ с '/' - завершить разбор параметров и не заменять '""' на пробелы");
-		//if (params < 1) {
-		//	curCommand = NULL;
-		//}
-		// Parse parameters.
-		// Duplicated parameters are permitted, the first value is used.
-		uint i = 0;
-
-		while (i < params && curCommand && *curCommand)
-		{
-			bool lbNotFound = false;
-			bool lbSwitchChanged = false;
-
-			// ':' removed from checks because otherwise it will not warn
-			// on invalid usage of "-new_console:a" for example
-			if (*curCommand == L'-' && curCommand[1] && !wcspbrk(curCommand+1, L"\\//|.&<>^"))
-			{
-				// Seems this is to be the "switch" too
-				*curCommand = L'/';
-				lbSwitchChanged = true;
-			}
-
-			if (*curCommand == L'/')
-			{
-				if (!klstricmp(curCommand, _T("/autosetup")))
-				{
-					BOOL lbTurnOn = TRUE;
-
-					if ((i + 1) >= params)
-						return 101;
-
-					curCommand += _tcslen(curCommand) + 1; i++;
-
-					if (*curCommand == _T('0'))
-						lbTurnOn = FALSE;
-					else
-					{
-						if ((i + 1) >= params)
-							return 101;
-
-						curCommand += _tcslen(curCommand) + 1; i++;
-						DWORD dwAttr = GetFileAttributes(curCommand);
-
-						if (dwAttr == (DWORD)-1 || (dwAttr & FILE_ATTRIBUTE_DIRECTORY))
-							return 102;
-					}
-
-					HKEY hk = NULL; DWORD dw;
-					int nSetupRc = 100;
-
-					if (0 != RegCreateKeyEx(HKEY_CURRENT_USER, _T("Software\\Microsoft\\Command Processor"),
-										   0, NULL, 0, KEY_ALL_ACCESS, NULL, &hk, &dw))
-						return 103;
-
-					if (lbTurnOn)
-					{
-						size_t cchMax = _tcslen(curCommand);
-						LPCWSTR pszArg1 = NULL;
-						if ((i + 1) < params)
-						{
-							// Здесь может быть "/GHWND=NEW"
-							pszArg1 = curCommand + cchMax + 1;
-							if (!*pszArg1)
-								pszArg1 = NULL;
-							else
-								cchMax += _tcslen(pszArg1);
-						}
-						cchMax += 16; // + кавычки и пробелы всякие
-
-						wchar_t* pszCmd = (wchar_t*)calloc(cchMax, sizeof(*pszCmd));
-						_wsprintf(pszCmd, SKIPLEN(cchMax) L"\"%s\"%s%s%s", curCommand,
-							pszArg1 ? L" \"" : L"", pszArg1 ? pszArg1 : L"", pszArg1 ? L"\"" : L"");
-
-
-						if (0 == RegSetValueEx(hk, _T("AutoRun"), 0, REG_SZ, (LPBYTE)pszCmd,
-											(DWORD)sizeof(TCHAR)*(_tcslen(pszCmd)+1))) //-V220
-							nSetupRc = 1;
-
-						free(pszCmd);
-					}
-					else
-					{
-						if (0==RegDeleteValue(hk, _T("AutoRun")))
-							nSetupRc = 1;
-					}
-
-					RegCloseKey(hk);
-					// сбросить CreateInNewEnvironment для ConMan
-					ResetConman();
-					return nSetupRc;
-				}
-				else if (!klstricmp(curCommand, _T("/bypass")))
-				{
-					// Этот ключик был придуман для прозрачного запуска консоли
-					// в режиме администратора
-					// (т.е. чтобы окно UAC нормально всплывало, но не мелькало консольное окно)
-					// Но не получилось, пока требуются хэндлы процесса, а их не получается
-					// передать в НЕ приподнятый процесс (исходный ConEmu GUI).
-
-					if (!cmdNew || !*cmdNew)
-					{
-						DisplayLastError(L"Invalid cmd line. '/bypass' exists, '/cmd' not", -1);
-						return 100;
-					}
-
-					// Information
-					#ifdef _DEBUG
-					STARTUPINFO siOur = {sizeof(siOur)};
-					GetStartupInfo(&siOur);
-					#endif
-
-					STARTUPINFO si = {sizeof(si)};
-					si.dwFlags = STARTF_USESHOWWINDOW;
-
-					PROCESS_INFORMATION pi = {};
-
-					BOOL b = CreateProcess(NULL, cmdNew, NULL, NULL, TRUE, NORMAL_PRIORITY_CLASS, NULL, NULL, &si, &pi);
-					if (b)
-					{
-						CloseHandle(pi.hProcess);
-						CloseHandle(pi.hThread);
-						return 0;
-					}
-
-					// Failed
-					DisplayLastError(cmdNew);
-					return 100;
-				}
-				else if (!klstricmp(curCommand, _T("/demote")))
-				{
-					// Запуск процесса (ком.строка после "/demote") в режиме простого юзера,
-					// когда текущий процесс уже запущен "под админом". "Понизить" текущие
-					// привилегии просто так нельзя, поэтому запуск идет через TaskSheduler.
-
-					if (!cmdNew || !*cmdNew)
-					{
-						DisplayLastError(L"Invalid cmd line. '/demote' exists, '/cmd' not", -1);
-						return 100;
-					}
-
-
-					// Information
-					#ifdef _DEBUG
-					STARTUPINFO siOur = {sizeof(siOur)};
-					GetStartupInfo(&siOur);
-					#endif
-
-					STARTUPINFO si = {sizeof(si)};
-					PROCESS_INFORMATION pi = {};
-					si.dwFlags = STARTF_USESHOWWINDOW;
-					si.wShowWindow = SW_SHOWNORMAL;
-
-					wchar_t szCurDir[MAX_PATH+1] = L"";
-					GetCurrentDirectory(countof(szCurDir), szCurDir);
-
-					BOOL b;
-					DWORD nErr = 0;
-
-
-					b = CreateProcessDemoted(cmdNew, NULL, NULL, FALSE, NORMAL_PRIORITY_CLASS, NULL,
-							szCurDir, &si, &pi, &nErr);
-
-
-					if (b)
-					{
-						SafeCloseHandle(pi.hProcess);
-						SafeCloseHandle(pi.hThread);
-						return 0;
-					}
-
-					// If the error was not shown yet
-					if (nErr) DisplayLastError(cmdNew, nErr);
-					return 100;
-				}
-				else if (!klstricmp(curCommand, _T("/multi")))
-				{
-					gpConEmu->AppendExtraArgs(curCommand);
-					MultiConValue = true; MultiConPrm = true;
-				}
-				else if (!klstricmp(curCommand, _T("/nomulti")))
-				{
-					gpConEmu->AppendExtraArgs(curCommand);
-					MultiConValue = false; MultiConPrm = true;
-				}
-				else if (!klstricmp(curCommand, _T("/visible")))
-				{
-					VisValue = true; VisPrm = true;
-				}
-				else if (!klstricmp(curCommand, _T("/ct")) || !klstricmp(curCommand, _T("/cleartype"))
-					|| !klstricmp(curCommand, _T("/ct0")) || !klstricmp(curCommand, _T("/ct1")) || !klstricmp(curCommand, _T("/ct2")))
-				{
-					ClearTypePrm = true;
-					switch (curCommand[3])
-					{
-					case L'0':
-						ClearTypeVal = NONANTIALIASED_QUALITY; break;
-					case L'1':
-						ClearTypeVal = ANTIALIASED_QUALITY; break;
-					default:
-						ClearTypeVal = CLEARTYPE_NATURAL_QUALITY;
-					}
-				}
-				// имя шрифта
-				else if (!klstricmp(curCommand, _T("/font")) && i + 1 < params)
-				{
-					curCommand += _tcslen(curCommand) + 1; i++;
-
-					if (!FontPrm)
-					{
-						FontPrm = true;
-						FontVal = curCommand;
-						gpConEmu->AppendExtraArgs(L"/font", curCommand);
-					}
-				}
-				// Высота шрифта
-				else if (!klstricmp(curCommand, _T("/size")) && i + 1 < params)
-				{
-					curCommand += _tcslen(curCommand) + 1; i++;
-
-					if (!SizePrm)
-					{
-						SizePrm = true;
-						SizeVal = klatoi(curCommand);
-					}
-				}
-				#if 0
-				//120714 - аналогичные параметры работают в ConEmuC.exe, а в GUI они и не работали. убрал пока
-				else if (!klstricmp(curCommand, _T("/attach")) /*&& i + 1 < params*/)
-				{
-					//curCommand += _tcslen(curCommand) + 1; i++;
-					if (!AttachPrm)
-					{
-						AttachPrm = true; AttachVal = -1;
-
-						if ((i + 1) < params)
-						{
-							TCHAR *nextCommand = curCommand + _tcslen(curCommand) + 1;
-
-							if (*nextCommand != _T('/'))
-							{
-								curCommand = nextCommand; i++;
-								AttachVal = klatoi(curCommand);
-							}
-						}
-
-						// интеллектуальный аттач - если к текущей консоли уже подцеплена другая копия
-						if (AttachVal == -1)
-						{
-							HWND hCon = GetForegroundWindow();
-
-							if (!hCon)
-							{
-								// консоли нет
-								return 100;
-							}
-							else
-							{
-								TCHAR sClass[128];
-
-								if (GetClassName(hCon, sClass, 128))
-								{
-									if (_tcscmp(sClass, VirtualConsoleClassMain)==0)
-									{
-										// Сверху УЖЕ другая копия ConEmu
-										return 1;
-									}
-
-									// Если на самом верху НЕ консоль - это может быть панель проводника,
-									// или другое плавающее окошко... Поищем ВЕРХНЮЮ консоль
-									if (isConsoleClass(sClass))
-									{
-										wcscpy_c(sClass, RealConsoleClass);
-										hCon = FindWindow(RealConsoleClass, NULL);
-										if (!hCon)
-											hCon = FindWindow(WineConsoleClass, NULL);
-
-										if (!hCon)
-											return 100;
-									}
-
-									if (isConsoleClass(sClass))
-									{
-										// перебрать все ConEmu, может кто-то уже подцеплен?
-										HWND hEmu = NULL;
-
-										while ((hEmu = FindWindowEx(NULL, hEmu, VirtualConsoleClassMain, NULL)) != NULL)
-										{
-											if (hCon == (HWND)GetWindowLongPtr(hEmu, GWLP_USERDATA))
-											{
-												// к этой консоли уже подцеплен ConEmu
-												return 1;
-											}
-										}
-									}
-									else
-									{
-										// верхнее окно - НЕ консоль
-										return 100;
-									}
-								}
-							}
-
-							gpSetCls->hAttachConWnd = hCon;
-						}
-					}
-				}
-				#endif
-				// ADD fontname; by Mors
-				else if (!klstricmp(curCommand, _T("/fontfile")) && i + 1 < params)
-				{
-					bool bOk = false; TCHAR* pszFile = NULL;
-					if (!GetCfgParm(i, curCommand, bOk, pszFile, MAX_PATH))
-					{
-						return 100;
-					}
-					gpConEmu->AppendExtraArgs(L"/fontfile", pszFile);
-					gpSetCls->RegisterFont(pszFile, TRUE);
-				}
-				// Register all fonts from specified directory
-				else if (!klstricmp(curCommand, _T("/fontdir")) && i + 1 < params)
-				{
-					bool bOk = false; TCHAR* pszDir = NULL;
-					if (!GetCfgParm(i, curCommand, bOk, pszDir, MAX_PATH))
-					{
-						return 100;
-					}
-					gpConEmu->AppendExtraArgs(L"/fontdir", pszDir);
-					gpSetCls->RegisterFontsDir(pszDir);
-				}
-				else if (!klstricmp(curCommand, _T("/fs")))
-				{
-					WindowModeVal = rFullScreen; WindowPrm = true;
-				}
-				else if (!klstricmp(curCommand, _T("/max")))
-				{
-					WindowModeVal = rMaximized; WindowPrm = true;
-				}
-				else if (!klstricmp(curCommand, _T("/min"))
-					|| !klstricmp(curCommand, _T("/mintsa"))
-					|| !klstricmp(curCommand, _T("/starttsa")))
-				{
-					gpConEmu->WindowStartMinimized = true;
-					if (klstricmp(curCommand, _T("/min")) != 0)
-					{
-						gpConEmu->WindowStartTsa = true;
-						gpConEmu->WindowStartNoClose = (klstricmp(curCommand, _T("/mintsa")) == 0);
-					}
-				}
-				else if (!klstricmp(curCommand, _T("/tsa")) || !klstricmp(curCommand, _T("/tray")))
-				{
-					gpConEmu->ForceMinimizeToTray = true;
-				}
-				else if (!klstricmp(curCommand, _T("/detached")))
-				{
-					gpConEmu->m_StartDetached = crb_On;
-				}
-				else if (!klstricmp(curCommand, _T("/here")))
-				{
-					gpConEmu->mb_ConEmuHere = true;
-					gpConEmu->StoreWorkDir();
-				}
-				else if (!klstricmp(curCommand, _T("/noupdate")))
-				{
-					gpConEmu->DisableAutoUpdate = true;
-				}
-				else if (!klstricmp(curCommand, _T("/nokeyhook"))
-					|| !klstricmp(curCommand, _T("/nokeyhooks"))
-					|| !klstricmp(curCommand, _T("/nokeybhook"))
-					|| !klstricmp(curCommand, _T("/nokeybhooks")))
-				{
-					gpConEmu->DisableKeybHooks = true;
-				}
-				else if (!klstricmp(curCommand, _T("/nocloseconfirm")))
-				{
-					gpConEmu->DisableCloseConfirm = true;
-				}
-				else if (!klstricmp(curCommand, _T("/nomacro")))
-				{
-					gpConEmu->DisableAllMacro = true;
-				}
-				else if (!klstricmp(curCommand, _T("/nohotkey"))
-					|| !klstricmp(curCommand, _T("/nohotkeys")))
-				{
-					gpConEmu->DisableAllHotkeys = true;
-				}
-				else if (!klstricmp(curCommand, _T("/nodeftrm"))
-					|| !klstricmp(curCommand, _T("/nodefterm")))
-				{
-					gpConEmu->DisableSetDefTerm = true;
-				}
-				else if (!klstricmp(curCommand, _T("/noregfont"))
-					|| !klstricmp(curCommand, _T("/noregfonts")))
-				{
-					gpConEmu->DisableRegisterFonts = true;
-				}
-				else if (!klstricmp(curCommand, _T("/inside"))
-					|| !lstrcmpni(curCommand, _T("/inside="), 8))
-				{
-					bool bRunAsAdmin = isPressed(VK_SHIFT);
-					bool bSyncDir = false;
-					LPCWSTR pszSyncFmt = NULL;
-
-					gpConEmu->mb_ConEmuHere = true;
-					gpConEmu->StoreWorkDir();
-
-					if (curCommand[7] == _T('='))
-					{
-						bSyncDir = true;
-						pszSyncFmt = curCommand+8; // \eCD /d %1 - \e - ESC, \b - BS, \n - ENTER, %1 - "dir", %2 - "bash dir"
-					}
-
-					CConEmuInside::InitInside(bRunAsAdmin, bSyncDir, pszSyncFmt, 0, NULL);
-				}
-				else if (!klstricmp(curCommand, _T("/insidepid")) && ((i + 1) < params))
-				{
-					curCommand += _tcslen(curCommand) + 1; i++;
-
-					bool bRunAsAdmin = isPressed(VK_SHIFT);
-
-					wchar_t* pszEnd;
-					// Здесь указывается PID, в который нужно внедриться.
-					DWORD nInsideParentPID = wcstol(curCommand, &pszEnd, 10);
-					if (nInsideParentPID)
-					{
-						CConEmuInside::InitInside(bRunAsAdmin, false, NULL, nInsideParentPID, NULL);
-					}
-				}
-				else if (!klstricmp(curCommand, _T("/insidewnd")) && ((i + 1) < params))
-				{
-					curCommand += _tcslen(curCommand) + 1; i++;
-					if (curCommand[0] == L'0' && (curCommand[1] == L'x' || curCommand[1] == L'X'))
-						curCommand += 2;
-					else if (curCommand[0] == L'x' || curCommand[0] == L'X')
-						curCommand ++;
-
-					bool bRunAsAdmin = isPressed(VK_SHIFT);
-
-					wchar_t* pszEnd;
-					// Здесь указывается HWND, в котором нужно создаваться.
-					HWND hParent = (HWND)wcstol(curCommand, &pszEnd, 16);
-					if (hParent && IsWindow(hParent))
-					{
-						CConEmuInside::InitInside(bRunAsAdmin, false, NULL, 0, hParent);
-					}
-				}
-				else if (!klstricmp(curCommand, _T("/icon")) && ((i + 1) < params))
-				{
-					curCommand += _tcslen(curCommand) + 1; i++;
-
-					if (!IconPrm && *curCommand)
-					{
-						IconPrm = true;
-						gpConEmu->mps_IconPath = ExpandEnvStr(curCommand);
-					}
-				}
-				else if (!klstricmp(curCommand, _T("/dir")) && i + 1 < params)
-				{
-					curCommand += _tcslen(curCommand) + 1; i++;
-
-					if (*curCommand)
-					{
-						// Например, "%USERPROFILE%"
-						wchar_t* pszExpand = NULL;
-						if (wcschr(curCommand, L'%') && ((pszExpand = ExpandEnvStr(curCommand)) != NULL))
-						{
-							gpConEmu->StoreWorkDir(pszExpand);
-							SafeFree(pszExpand);
-						}
-						else
-						{
-							gpConEmu->StoreWorkDir(curCommand);
-						}
-					}
-				}
-				else if (!klstricmp(curCommand, _T("/updatejumplist")))
-				{
-					// Copy current Task list to Win7 Jump list (Taskbar icon)
-					gpConEmu->mb_UpdateJumpListOnStartup = true;
-				}
-				else if (!klstricmp(curCommand, L"/log") || !klstricmp(curCommand, L"/log0"))
-				{
-					gpSetCls->isAdvLogging = 1;
-				}
-				else if (!klstricmp(curCommand, L"/log1") || !klstricmp(curCommand, L"/log2")
-					|| !klstricmp(curCommand, L"/log3") || !klstricmp(curCommand, L"/log4"))
-				{
-					gpSetCls->isAdvLogging = (BYTE)(curCommand[4] - L'0'); // 1..4
-				}
-				else if (!klstricmp(curCommand, _T("/single")) || !klstricmp(curCommand, _T("/reuse")))
-				{
-					// "/reuse" switch to be remastered
-					gpConEmu->AppendExtraArgs(curCommand);
-					gpSetCls->SingleInstanceArg = sgl_Enabled;
-				}
-				else if (!klstricmp(curCommand, _T("/nosingle")))
-				{
-					gpConEmu->AppendExtraArgs(curCommand);
-					gpSetCls->SingleInstanceArg = sgl_Disabled;
-				}
-				else if (!klstricmp(curCommand, _T("/quake"))
-					|| !klstricmp(curCommand, _T("/quakeauto"))
-					|| !klstricmp(curCommand, _T("/noquake")))
-				{
-					QuakePrm = true;
-					if (!klstricmp(curCommand, _T("/quake")))
-						QuakeMode = 1;
-					else if (!klstricmp(curCommand, _T("/quakeauto")))
-						QuakeMode = 2;
-					else
-					{
-						QuakeMode = 0;
-						if (gpSetCls->SingleInstanceArg == sgl_Default)
-							gpSetCls->SingleInstanceArg = sgl_Disabled;
-					}
-				}
-				else if (!klstricmp(curCommand, _T("/showhide")) || !klstricmp(curCommand, _T("/showhideTSA")))
-				{
-					gpSetCls->SingleInstanceArg = sgl_Enabled;
-					gpSetCls->SingleInstanceShowHide = !klstricmp(curCommand, _T("/showhide"))
-						? sih_ShowMinimize : sih_ShowHideTSA;
-				}
-				else if (!klstricmp(curCommand, _T("/reset"))
-					|| !klstricmp(curCommand, _T("/resetdefault"))
-					|| !klstricmp(curCommand, _T("/basic")))
-				{
-					ResetSettings = true;
-					if (!klstricmp(curCommand, _T("/resetdefault")))
-					{
-						gpSetCls->isFastSetupDisabled = true;
-					}
-					else if (!klstricmp(curCommand, _T("/basic")))
-					{
-						gpSetCls->isFastSetupDisabled = true;
-						gpSetCls->isResetBasicSettings = true;
-					}
-				}
-				else if (!klstricmp(curCommand, _T("/nocascade"))
-					|| !klstricmp(curCommand, _T("/dontcascade")))
-				{
-					gpConEmu->AppendExtraArgs(curCommand);
-					gpSetCls->isDontCascade = true;
-				}
-				else if (!klstricmp(curCommand, _T("/WndX")) || !klstricmp(curCommand, _T("/WndY"))
-					|| !klstricmp(curCommand, _T("/WndW")) || !klstricmp(curCommand, _T("/WndWidth"))
-					|| !klstricmp(curCommand, _T("/WndH")) || !klstricmp(curCommand, _T("/WndHeight")))
-				{
-					TCHAR ch = curCommand[4], *psz = NULL;
-					CharUpperBuff(&ch, 1);
-					if (!GetCfgParm(i, curCommand, SizePosPrm, psz, 32))
-					{
-						return 100;
-					}
-
-					// Direct X/Y implies /nocascade
-					if (ch == _T('X') || ch == _T('Y'))
-						gpSetCls->isDontCascade = true;
-
-					switch (ch)
-					{
-					case _T('X'): sWndX = psz; break;
-					case _T('Y'): sWndY = psz; break;
-					case _T('W'): sWndW = psz; break;
-					case _T('H'): sWndH = psz; break;
-					}
-				}
-				else if ((!klstricmp(curCommand, _T("/Buffer")) || !klstricmp(curCommand, _T("/BufferHeight")))
-					&& i + 1 < params)
-				{
-					curCommand += _tcslen(curCommand) + 1; i++;
-
-					if (!BufferHeightPrm)
-					{
-						BufferHeightPrm = true;
-						BufferHeightVal = klatoi(curCommand);
-
-						if (BufferHeightVal < 0)
-						{
-							//setParent = true; -- Maximus5 - нефиг, все ручками
-							BufferHeightVal = -BufferHeightVal;
-						}
-
-						if (BufferHeightVal < LONGOUTPUTHEIGHT_MIN)
-							BufferHeightVal = LONGOUTPUTHEIGHT_MIN;
-						else if (BufferHeightVal > LONGOUTPUTHEIGHT_MAX)
-							BufferHeightVal = LONGOUTPUTHEIGHT_MAX;
-					}
-				}
-				else if (!klstricmp(curCommand, _T("/Config")) && i + 1 < params)
-				{
-					//if (!ConfigPrm) -- используем последний из параметров, если их несколько
-					if (!GetCfgParm(i, curCommand, ConfigPrm, ConfigVal, 127))
-					{
-						return 100;
-					}
-				}
-				else if (!klstricmp(curCommand, _T("/Palette")) && i + 1 < params)
-				{
-					//if (!ConfigPrm) -- используем последний из параметров, если их несколько
-					if (!GetCfgParm(i, curCommand, PalettePrm, PaletteVal, MAX_PATH))
-					{
-						return 100;
-					}
-				}
-				else if (!klstricmp(curCommand, _T("/LoadRegistry")))
-				{
-					gpConEmu->AppendExtraArgs(curCommand);
-					ForceUseRegistryPrm = true;
-				}
-				else if (!klstricmp(curCommand, _T("/LoadCfgFile")) && i + 1 < params)
-				{
-					// используем последний из параметров, если их несколько
-					if (!GetCfgParm(i, curCommand, LoadCfgFilePrm, LoadCfgFile, MAX_PATH, true))
-					{
-						return 100;
-					}
-				}
-				else if (!klstricmp(curCommand, _T("/SaveCfgFile")) && i + 1 < params)
-				{
-					// используем последний из параметров, если их несколько
-					if (!GetCfgParm(i, curCommand, SaveCfgFilePrm, SaveCfgFile, MAX_PATH, true))
-					{
-						return 100;
-					}
-				}
-				else if (!klstricmp(curCommand, _T("/GuiMacro")) && i + 1 < params)
-				{
-					// выполняется только последний
-					if (!GetCfgParm(i, curCommand, GuiMacroPrm, ExecGuiMacro, 0x8000, false))
-					{
-						return 100;
-					}
-				}
-				else if (!klstricmp(curCommand, _T("/UpdateSrcSet")) && i + 1 < params)
-				{
-					// используем последний из параметров, если их несколько
-					if (!GetCfgParm(i, curCommand, UpdateSrcSetPrm, UpdateSrcSet, MAX_PATH*4, false))
-					{
-						return 100;
-					}
-				}
-				else if (!klstricmp(curCommand, _T("/AnsiLog")) && i + 1 < params)
-				{
-					// используем последний из параметров, если их несколько
-					if (!GetCfgParm(i, curCommand, AnsiLogPathPrm, AnsiLogPath, MAX_PATH-40, true))
-					{
-						return 100;
-					}
-				}
-				else if (!klstricmp(curCommand, _T("/SetDefTerm")))
-				{
-					SetUpDefaultTerminal = true;
-				}
-				else if (!klstricmp(curCommand, _T("/Exit")))
-				{
-					ExitAfterActionPrm = true;
-				}
-				else if (!klstricmp(curCommand, _T("/QuitOnClose")))
-				{
-					gpConEmu->mb_ForceQuitOnClose = true;
-				}
-				else if (!klstricmp(curCommand, _T("/Title")) && i + 1 < params)
-				{
-					bool bOk = false; TCHAR* pszTitle = NULL;
-					if (!GetCfgParm(i, curCommand, bOk, pszTitle, 127))
-					{
-						return 100;
-					}
-					gpConEmu->SetTitleTemplate(pszTitle);
-				}
-				else if (!klstricmp(curCommand, _T("/FindBugMode")))
-				{
-					gpConEmu->mb_FindBugMode = true;
-				}
-				else if (!klstricmp(curCommand, _T("/debug")) || !klstricmp(curCommand, _T("/debugi")))
-				{
-					// These switches were already processed
-				}
-				else if (!klstricmp(curCommand, _T("/?")) || !klstricmp(curCommand, _T("/h")) || !klstricmp(curCommand, _T("/help")))
-				{
-					//MessageBox(NULL, pHelp, L"About ConEmu...", MB_ICONQUESTION);
-					ConEmuAbout::OnInfo_About();
-					free(cmdLine);
-					return -1;
-				}
-				else
-				{
-					lbNotFound = true;
-
-					if (lbSwitchChanged)
-					{
-						*curCommand = L'-';
-					}
-				}
-			}
-
-			if (lbNotFound && /*i>0 &&*/ !psUnknown && (*curCommand == L'-' || *curCommand == L'/'))
-			{
-				// ругнуться на неизвестную команду
-				psUnknown = curCommand;
-			}
-
-			curCommand += _tcslen(curCommand) + 1; i++;
-		}
+		return iParseRc;
 	}
-
-	if (gpSetCls->isAdvLogging)
-	{
-		DEBUGSTRSTARTUP(L"Creating log file");
-		gpConEmu->CreateLog();
-	}
-
-	//if (setParentDisabled && (gpConEmu->setParent || gpConEmu->setParent2)) {
-	//	gpConEmu->setParent=false; gpConEmu->setParent2=false;
-	//}
-
-	if (psUnknown)
-	{
-		DEBUGSTRSTARTUP(L"Unknown switch, exiting!");
-		CEStr lsFail(lstrmerge(L"Unknown switch specified:\r\n", psUnknown));
-		gpConEmu->LogString(lsFail, false, false);
-
-		LPCWSTR pszNewConWarn = NULL;
-		if (wcsstr(psUnknown, L"new_console") || wcsstr(psUnknown, L"cur_console"))
-			pszNewConWarn = L"\r\n\r\n" L"Switch -new_console must be specified *after* /cmd or /cmdlist";
-
-		CEStr lsMsg(lstrmerge(
-			lsFail,
-			pszNewConWarn,
-			L"\r\n\r\n"
-			L"Visit website to get thorough switches description:\r\n"
-			CEGUIARGSPAGE
-			L"\r\n\r\n"
-			L"Or run ‘ConEmu.exe -?’ to get the brief."
-			));
-
-		MBoxA(lsMsg);
-		return 100;
-	}
-
 
 //------------------------------------------------------------------------
 ///| load settings and apply parameters |/////////////////////////////////
 //------------------------------------------------------------------------
 
 	// set config name before settings (i.e. where to load from)
-	if (ConfigPrm)
+	if (gpConEmu->opt.ConfigVal.Exists)
 	{
 		DEBUGSTRSTARTUP(L"Initializing configuration name");
-		gpSetCls->SetConfigName(ConfigVal);
+		gpSetCls->SetConfigName(gpConEmu->opt.ConfigVal.GetStr());
 	}
 
 	// Сразу инициализировать событие для SingleInstance. Кто первый схватит.
@@ -4470,24 +3557,30 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 	gpConEmu->isFirstInstance();
 
 	// xml-using disabled? Forced to registry?
-	if (ForceUseRegistryPrm)
+	if (gpConEmu->opt.ForceUseRegistryPrm)
 	{
 		gpConEmu->SetForceUseRegistry();
 	}
 	// special config file
-	else if (LoadCfgFilePrm)
+	else if (gpConEmu->opt.LoadCfgFile.Exists)
 	{
 		DEBUGSTRSTARTUP(L"Exact cfg file was specified");
 		// При ошибке - не выходим, просто покажем ее пользователю
-		gpConEmu->SetConfigFile(LoadCfgFile, false/*abWriteReq*/, true/*abSpecialPath*/);
-		// Release mem
-		SafeFree(LoadCfgFile);
+		gpConEmu->SetConfigFile(gpConEmu->opt.LoadCfgFile.GetStr(), false/*abWriteReq*/, true/*abSpecialPath*/);
+	}
+
+	//------------------------------------------------------------------------
+	///| Set our own AppUserModelID for Win7 TaskBar |////////////////////////
+	//------------------------------------------------------------------------
+	if (IsWindows7)
+	{
+		UpdateAppUserModelID();
 	}
 
 	// preparing settings
 	bool bNeedCreateVanilla = false;
 	SettingsLoadedFlags slfFlags = slf_None;
-	if (ResetSettings)
+	if (gpConEmu->opt.ResetSettings)
 	{
 		// force this config as "new"
 		DEBUGSTRSTARTUP(L"Clear config was requested");
@@ -4502,17 +3595,17 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 	}
 
 	// Quake/NoQuake?
-	if (QuakePrm)
+	if (gpConEmu->opt.QuakeMode.Exists)
 	{
-		gpConEmu->SetQuakeMode(QuakeMode);
+		gpConEmu->SetQuakeMode(gpConEmu->opt.QuakeMode.GetInt());
 	}
 
 	// Update package was dropped on ConEmu icon?
 	// params == (uint)-1, если первый аргумент не начинается с '/'
-	if (cmdNew && *cmdNew && (params == (uint)-1))
+	if (gpConEmu->opt.cmdNew && *gpConEmu->opt.cmdNew && (gpConEmu->opt.params == -1))
 	{
 		CmdArg szPath;
-		LPCWSTR pszCmdLine = cmdNew;
+		LPCWSTR pszCmdLine = gpConEmu->opt.cmdNew;
 		if (0 == NextArg(&pszCmdLine, szPath))
 		{
 			if (CConEmuUpdate::IsUpdatePackage(szPath))
@@ -4532,9 +3625,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 	}
 
 	// Store command line in our class variables to be able show it in "Fast Configuration" dialog
-	if (cmdNew)
+	if (gpConEmu->opt.cmdNew)
 	{
-		int iArgRc = ProcessCmdArg(cmdNew, isScript, (params == (uint)-1), szReady, ReqSaveHistory);
+		int iArgRc = ProcessCmdArg(gpConEmu->opt.cmdNew, gpConEmu->opt.isScript, (gpConEmu->opt.params == -1), szReady, ReqSaveHistory);
 		if (iArgRc != 0)
 		{
 			return iArgRc;
@@ -4545,47 +3638,46 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 	slfFlags |= slf_OnStartupLoad | slf_AllowFastConfig
 		| (bNeedCreateVanilla ? slf_NeedCreateVanilla : slf_None)
 		| (gpSet->IsConfigPartial ? slf_DefaultTasks : slf_None)
-		| ((ResetSettings || gpSet->IsConfigNew) ? slf_DefaultSettings : slf_None);
+		| ((gpConEmu->opt.ResetSettings || gpSet->IsConfigNew) ? slf_DefaultSettings : slf_None);
 	// выполнить дополнительные действия в классе настроек здесь
 	DEBUGSTRSTARTUP(L"Config loaded, post checks");
-	gpSetCls->SettingsLoaded(slfFlags, cmdNew);
+	gpSetCls->SettingsLoaded(slfFlags, gpConEmu->opt.cmdNew);
 
 	// Для gpSet->isQuakeStyle - принудительно включается gpSetCls->SingleInstanceArg
 
 	// When "/Palette <name>" is specified
-	if (PalettePrm)
+	if (gpConEmu->opt.PaletteVal.Exists)
 	{
-		gpSet->PaletteSetActive(PaletteVal);
+		gpSet->PaletteSetActive(gpConEmu->opt.PaletteVal.GetStr());
 	}
 
 	// Set another update location (-UpdateSrcSet <URL>)
-	if (UpdateSrcSetPrm)
+	if (gpConEmu->opt.UpdateSrcSet.Exists)
 	{
-		gpSet->UpdSet.SetUpdateVerLocation(UpdateSrcSet);
+		gpSet->UpdSet.SetUpdateVerLocation(gpConEmu->opt.UpdateSrcSet.GetStr());
 	}
 
 	// Force "AnsiLog" feature
-	if (AnsiLogPathPrm)
+	if (gpConEmu->opt.AnsiLogPath.GetStr())
 	{
-		gpSet->isAnsiLog = (AnsiLogPath && *AnsiLogPath);
+		gpSet->isAnsiLog = true;
 		SafeFree(gpSet->pszAnsiLog);
-		gpSet->pszAnsiLog = AnsiLogPath;
-		AnsiLogPath = NULL;
+		gpSet->pszAnsiLog = lstrdup(gpConEmu->opt.AnsiLogPath.GetStr());
 	}
 
 	// Forced window size or pos
 	// Call this AFTER SettingsLoaded because we (may be)
 	// don't want to change ‘xml-stored’ values
-	if (SizePosPrm)
+	if (gpConEmu->opt.SizePosPrm)
 	{
-		if (sWndX)
-			gpConEmu->SetWindowPosSizeParam(L'X', sWndX);
-		if (sWndY)
-			gpConEmu->SetWindowPosSizeParam(L'Y', sWndY);
-		if (sWndW)
-			gpConEmu->SetWindowPosSizeParam(L'W', sWndW);
-		if (sWndH)
-			gpConEmu->SetWindowPosSizeParam(L'H', sWndH);
+		if (gpConEmu->opt.sWndX.Exists)
+			gpConEmu->SetWindowPosSizeParam(L'X', gpConEmu->opt.sWndX.GetStr());
+		if (gpConEmu->opt.sWndY.Exists)
+			gpConEmu->SetWindowPosSizeParam(L'Y', gpConEmu->opt.sWndY.GetStr());
+		if (gpConEmu->opt.sWndW.Exists)
+			gpConEmu->SetWindowPosSizeParam(L'W', gpConEmu->opt.sWndW.GetStr());
+		if (gpConEmu->opt.sWndH.Exists)
+			gpConEmu->SetWindowPosSizeParam(L'H', gpConEmu->opt.sWndH.GetStr());
 	}
 
 	DEBUGSTRSTARTUPLOG(L"SettingsLoaded");
@@ -4599,7 +3691,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 	// ExitAfterActionPrm - сразу выйти после выполнения действий
 	// не наколоться бы с isAutoSaveSizePos
 
-	if (gpConEmu->mb_UpdateJumpListOnStartup && ExitAfterActionPrm)
+	if (gpConEmu->mb_UpdateJumpListOnStartup && gpConEmu->opt.ExitAfterActionPrm)
 	{
 		DEBUGSTRSTARTUP(L"Updating Win7 task list");
 		if (!UpdateWin7TaskList(true/*bForce*/, true/*bNoSuccMsg*/))
@@ -4609,11 +3701,11 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 	}
 
 	// special config file
-	if (SaveCfgFilePrm)
+	if (gpConEmu->opt.SaveCfgFile.Exists)
 	{
 		// Сохранять конфиг только если получилось сменить путь (создать файл)
 		DEBUGSTRSTARTUP(L"Force write current config to settings storage");
-		if (!gpConEmu->SetConfigFile(SaveCfgFile, true/*abWriteReq*/, true/*abSpecialPath*/))
+		if (!gpConEmu->SetConfigFile(gpConEmu->opt.SaveCfgFile.GetStr(), true/*abWriteReq*/, true/*abSpecialPath*/))
 		{
 			if (!iMainRc) iMainRc = 11;
 		}
@@ -4624,19 +3716,17 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 				if (!iMainRc) iMainRc = 12;
 			}
 		}
-		// Release mem
-		SafeFree(SaveCfgFile);
 	}
 
 	// Only when ExitAfterActionPrm, otherwise - it will be called from ConEmu's PostCreate
-	if (SetUpDefaultTerminal)
+	if (gpConEmu->opt.SetUpDefaultTerminal)
 	{
 		_ASSERTE(!gpConEmu->DisableSetDefTerm);
 
 		gpSet->isSetDefaultTerminal = true;
 		gpSet->isRegisterOnOsStartup = true;
 
-		if (ExitAfterActionPrm)
+		if (gpConEmu->opt.ExitAfterActionPrm)
 		{
 			if (gpConEmu->mp_DefTrm)
 			{
@@ -4656,15 +3746,15 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 	}
 
 	// Actions done
-	if (ExitAfterActionPrm)
+	if (gpConEmu->opt.ExitAfterActionPrm)
 	{
 		DEBUGSTRSTARTUP(L"Exit was requested");
 		goto wrap;
 	}
 
-	if (GuiMacroPrm && ExecGuiMacro && *ExecGuiMacro)
+	if (gpConEmu->opt.ExecGuiMacro.GetStr())
 	{
-		gpConEmu->SetPostGuiMacro(ExecGuiMacro);
+		gpConEmu->SetPostGuiMacro(gpConEmu->opt.ExecGuiMacro.GetStr());
 	}
 
 //------------------------------------------------------------------------
@@ -4676,7 +3766,6 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 	if (gpConEmu->mp_Inside && (gpConEmu->mp_Inside->mh_InsideParentWND == INSIDE_PARENT_NOT_FOUND))
 	{
 		DEBUGSTRSTARTUP(L"Bad InsideParentHWND, exiting");
-		free(cmdLine);
 		return 100;
 	}
 
@@ -4685,7 +3774,6 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 	if (!gpConEmu->CheckRequiredFiles())
 	{
 		DEBUGSTRSTARTUP(L"Required files were not found, exiting");
-		free(cmdLine);
 		return 100;
 	}
 
@@ -4697,12 +3785,12 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 	//	_tcscpy(gpSet->LogFont.lfFaceName, FontVal);
 	//if (SizePrm)
 	//	gpSet->LogFont.lfHeight = SizeVal;
-	if (BufferHeightPrm)
+	if (gpConEmu->opt.BufferHeightVal.Exists)
 	{
-		gpSetCls->SetArgBufferHeight(BufferHeightVal);
+		gpSetCls->SetArgBufferHeight(gpConEmu->opt.BufferHeightVal.GetInt());
 	}
 
-	if (!WindowPrm)
+	if (!gpConEmu->opt.WindowModeVal.Exists)
 	{
 		if (nCmdShow == SW_SHOWMAXIMIZED)
 			gpSet->_WindowMode = wmMaximized;
@@ -4711,14 +3799,14 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 	}
 	else
 	{
-		gpSet->_WindowMode = (ConEmuWindowMode)WindowModeVal;
+		gpSet->_WindowMode = (ConEmuWindowMode)gpConEmu->opt.WindowModeVal.GetInt();
 	}
 
-	if (MultiConPrm)
-		gpSet->mb_isMulti = MultiConValue;
+	if (gpConEmu->opt.MultiConValue.Exists)
+		gpSet->mb_isMulti = gpConEmu->opt.MultiConValue;
 
-	if (VisValue)
-		gpSet->isConVisible = VisPrm;
+	if (gpConEmu->opt.VisValue.Exists)
+		gpSet->isConVisible = gpConEmu->opt.VisValue;
 
 	// Если запускается conman (нафига?) - принудительно включить флажок "Обновлять handle"
 	//TODO("Deprecated: isUpdConHandle использоваться не должен");
@@ -4728,7 +3816,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 		//gpSet->isUpdConHandle = TRUE;
 
 		// сбросить CreateInNewEnvironment для ConMan
-		ResetConman();
+		gpConEmu->ResetConman();
 	}
 
 	// Need to add to the history?
@@ -4766,9 +3854,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 
 	gpSetCls->RegisterFonts();
 	gpSetCls->InitFont(
-		FontPrm ? FontVal : NULL,
-		SizePrm ? SizeVal : -1,
-		ClearTypePrm ? ClearTypeVal : -1
+		gpConEmu->opt.FontVal.GetStr(),
+		gpConEmu->opt.SizeVal.Exists ? gpConEmu->opt.SizeVal.GetInt() : -1,
+		gpConEmu->opt.ClearTypeVal.Exists ? gpConEmu->opt.ClearTypeVal.GetInt() : -1
 	);
 
 	if (gpSet->wndCascade)
@@ -4901,8 +3989,6 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 
 	if (!gpConEmu->CreateMainWindow())
 	{
-		free(cmdLine);
-		//delete pVCon;
 		return 100;
 	}
 
@@ -4918,6 +4004,17 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 	MessageLoop();
 
 	iMainRc = gpConEmu->mn_ShellExitCode;
+	switch (iMainRc)
+	{
+	case STATUS_CONTROL_C_EXIT:
+		DEBUGSTRSTARTUP(L"Shell has reported close by Ctrl+C. ConEmu is going to exit with code 0xC000013A."); break;
+	case STILL_ACTIVE:
+		DEBUGSTRSTARTUP(L"Shell has not reported its exit code. Abnormal termination or detached window? ConEmu is going to exit with code 259."); break;
+	case 0:
+		break;
+	default:
+		DEBUGSTRSTARTUP(L"ConEmu is going to exit with shell's exit code.");
+	}
 
 done:
 	DEBUGSTRSTARTUP(L"Terminating");
@@ -4931,7 +4028,6 @@ done:
 	//if (FontFilePrm) RemoveFontResourceEx(FontFile, FR_PRIVATE, NULL); //ADD fontname; by Mors
 	gpSetCls->UnregisterFonts();
 
-	free(cmdLine);
 	//CoUninitialize();
 	OleUninitialize();
 

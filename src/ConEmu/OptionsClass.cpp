@@ -98,7 +98,7 @@ THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 HWND ghOpWnd=NULL;
 
 #ifdef _DEBUG
-#define HEAPVAL //HeapValidate(GetProcessHeap(), 0, NULL);
+#define HEAPVAL HeapValidate(GetProcessHeap(), 0, NULL);
 #else
 #define HEAPVAL
 #endif
@@ -647,6 +647,8 @@ CSettings::~CSettings()
 	SafeFree(m_Pages);
 
 	SafeDelete(mp_HelpPopup);
+	SafeDelete(mp_Dialog);
+	SafeDelete(mp_DpiAware);
 }
 
 LPCWSTR CSettings::GetConfigPath()
@@ -1081,6 +1083,7 @@ LONG CSettings::EvalFontHeight(LPCWSTR lfFaceName, LONG lfHeight, BYTE nFontChar
 				SelectObject(hdc, hOld);
 				DeleteObject(f);
 			}
+			DeleteDC(hdc);
 		}
 
 		if (!CellHeight)
@@ -1207,6 +1210,7 @@ void CSettings::InitFont(LPCWSTR asFontName/*=NULL*/, int anFontHeight/*=-1*/, i
 	MCHKHEAP
 }
 
+// Find setting by typed name in the "Search" box
 void CSettings::SearchForControls()
 {
 	HWND hSearchEdit = GetDlgItem(ghOpWnd, tOptionSearch);
@@ -1375,9 +1379,9 @@ void CSettings::SearchForControls()
 							{
 								SendMessage(hCtrl, LB_GETTEXT, lFind, (LPARAM)szText);
 							}
-							break; // Нашли
+							break; // Found
 						}
-					}
+					} // End of "ListBox" processing
 					else if (lstrcmpi(szClass, L"SysListView32") == 0)
 					{
 						LVITEM lvi = {LVIF_TEXT|LVIF_STATE|LVIF_PARAM};
@@ -1407,13 +1411,14 @@ void CSettings::SearchForControls()
 							ListView_SetItemState(hCtrl, lFind, LVIS_SELECTED, LVIS_SELECTED);
 							ListView_SetSelectionMark(hCtrl, lFind);
 							ListView_EnsureVisible(hCtrl, lFind, FALSE);
-							break; // Нашли
+							break; // Found
 						}
-					}
-					else if (((lstrcmpi(szClass, L"Button") == 0) || (lstrcmpi(szClass, L"Static") != 0))
+					} // End of "SysListView32" processing
+					else if (((lstrcmpi(szClass, L"Button") == 0)
+								|| (lstrcmpi(szClass, L"Static") == 0))
 						&& GetWindowText(hCtrl, szText, countof(szText)) && *szText)
 					{
-						// В контроле может быть акселератор (&) мешающий поиску
+						// The control's text may has (&) accelerator confusing the search
 						wchar_t* p = wcschr(szText, L'&');
 						while (p)
 						{
@@ -1422,8 +1427,15 @@ void CSettings::SearchForControls()
 						}
 
 						if (StrStrI(szText, pszPart) != NULL)
-							break;
-					}
+							break; // Found
+					} // End of "Button" and "Static" processing
+					else if ((lstrcmpi(szClass, L"Edit") == 0)
+						&& GetWindowText(hCtrl, szText, countof(szText)) && *szText)
+					{
+						// Process "Edit" fields too (search for user-typed string)
+						if (StrStrI(szText, pszPart) != NULL)
+							break; // Found
+					} // End of "Edit" processing
 				}
 
 				hCtrl = FindWindowEx(hCurTab, hCtrl, NULL, NULL);
@@ -3036,6 +3048,42 @@ int CSettings::HotkeysCompare(LPARAM lParam1, LPARAM lParam2, LPARAM lParamSort)
 	return nCmp;
 }
 
+void CSettings::setHotkeyCheckbox(HWND hDlg, WORD nCtrlId, int iHotkeyId, LPCWSTR pszFrom, LPCWSTR pszTo, bool bChecked)
+{
+	wchar_t szKeyFull[128] = L"";
+	gpSet->GetHotkeyNameById(iHotkeyId, szKeyFull, false);
+	if (szKeyFull[0] == 0)
+	{
+		EnableWindow(GetDlgItem(hDlg, nCtrlId), FALSE);
+		checkDlgButton(hDlg, nCtrlId, BST_UNCHECKED);
+	}
+	else
+	{
+		if (pszFrom)
+		{
+			wchar_t* ptr = (wchar_t*)wcsstr(szKeyFull, pszFrom);
+			if (ptr)
+			{
+				*ptr = 0;
+				if (pszTo)
+				{
+					wcscat_c(szKeyFull, pszTo);
+				}
+			}
+		}
+
+		CEStr lsText = GetDlgItemTextPtr(hDlg, nCtrlId);
+		LPCWSTR pszTail = lsText.IsEmpty() ? NULL : wcsstr(lsText, L" - ");
+		if (pszTail)
+		{
+			CEStr lsNew = lstrmerge(szKeyFull, pszTail);
+			SetDlgItemText(hDlg, nCtrlId, lsNew);
+		}
+
+		checkDlgButton(hDlg, nCtrlId, bChecked);
+	}
+}
+
 LRESULT CSettings::OnInitDialog_Control(HWND hWnd2, bool abInitial)
 {
 	checkDlgButton(hWnd2, cbEnableMouse, !gpSet->isDisableMouse);
@@ -3046,9 +3094,10 @@ LRESULT CSettings::OnInitDialog_Control(HWND hWnd2, bool abInitial)
 	               (gpSet->m_isKeyboardHooks == 1) ? BST_CHECKED :
 	               ((gpSet->m_isKeyboardHooks == 0) ? BST_INDETERMINATE : BST_UNCHECKED));
 
-	checkDlgButton(hWnd2, cbUseWinNumber, gpSet->isUseWinNumber);
+	setHotkeyCheckbox(hWnd2, cbUseWinNumber, vkConsole_1, L"+1", L"+Numbers", gpSet->isUseWinNumber);
+	setHotkeyCheckbox(hWnd2, cbUseWinArrows, vkWinLeft, L"+Left", L"+Arrows", gpSet->isUseWinArrows);
+
 	checkDlgButton(hWnd2, cbUseWinTab, gpSet->isUseWinTab);
-	checkDlgButton(hWnd2, cbUseWinArrows, gpSet->isUseWinArrows);
 
 	checkDlgButton(hWnd2, cbSendAltTab, gpSet->isSendAltTab);
 	checkDlgButton(hWnd2, cbSendAltEsc, gpSet->isSendAltEsc);
@@ -3066,7 +3115,7 @@ LRESULT CSettings::OnInitDialog_Control(HWND hWnd2, bool abInitial)
 	CSetDlgLists::FillListBoxItems(GetDlgItem(hWnd2, lbCTSClickPromptPosition), CSetDlgLists::eKeysAct, VkMod, false);
 
 	// Ctrl+BS - del left word
-	checkDlgButton(hWnd2, cbCTSDeleteLeftWord, gpSet->AppStd.isCTSDeleteLeftWord);
+	setHotkeyCheckbox(hWnd2, cbCTSDeleteLeftWord, vkDeleteLeftWord, NULL, NULL, gpSet->AppStd.isCTSDeleteLeftWord);
 
 	checkDlgButton(hWnd2, (gpSet->isCTSActMode==1)?rbCTSActAlways:rbCTSActBufferOnly, BST_CHECKED);
 	VkMod = gpSet->GetHotkeyById(vkCTSVkAct);
@@ -4535,7 +4584,7 @@ LRESULT CSettings::OnInitDialog_Debug(HWND hWnd2)
 	return 0;
 }
 
-LRESULT CSettings::OnInitDialog_Update(HWND hWnd2)
+LRESULT CSettings::OnInitDialog_Update(HWND hWnd2, bool abInitial)
 {
 	ConEmuUpdateSettings* p = &gpSet->UpdSet;
 
@@ -4548,11 +4597,15 @@ LRESULT CSettings::OnInitDialog_Update(HWND hWnd2)
 	checkRadioButton(hWnd2, rbUpdateStableOnly, rbUpdateLatestAvailable,
 		(p->isUpdateUseBuilds==1) ? rbUpdateStableOnly : (p->isUpdateUseBuilds==3) ? rbUpdatePreview : rbUpdateLatestAvailable);
 
+	checkDlgButton(hWnd2, cbUpdateInetTool, p->isUpdateInetTool);
+	SetDlgItemText(hWnd2, tUpdateInetTool, p->GetUpdateInetToolCmd());
+
 	checkDlgButton(hWnd2, cbUpdateUseProxy, p->isUpdateUseProxy);
-	OnButtonClicked(hWnd2, cbUpdateUseProxy, 0); // Enable/Disable proxy fields
 	SetDlgItemText(hWnd2, tUpdateProxy, p->szUpdateProxy);
 	SetDlgItemText(hWnd2, tUpdateProxyUser, p->szUpdateProxyUser);
 	SetDlgItemText(hWnd2, tUpdateProxyPassword, p->szUpdateProxyPassword);
+
+	OnButtonClicked(hWnd2, cbUpdateInetTool, 0); // Enable/Disable command field, button '...' and ‘Proxy’ fields
 
 	int nPackage = p->UpdateDownloadSetup(); // 1-exe, 2-7zip
 	checkRadioButton(hWnd2, rbUpdateUseExe, rbUpdateUseArc, (nPackage==1) ? rbUpdateUseExe : rbUpdateUseArc);
@@ -4978,6 +5031,10 @@ LRESULT CSettings::OnEditChanged(HWND hWnd2, WPARAM wParam, LPARAM lParam)
 
 
 	/* *** Update settings *** */
+	case tUpdateInetTool:
+		if (gpSet->UpdSet.isUpdateInetTool)
+			GetString(hWnd2, TB, &gpSet->UpdSet.szUpdateInetTool);
+		break;
 	case tUpdateProxy:
 		GetString(hWnd2, TB, &gpSet->UpdSet.szUpdateProxy);
 		break;
@@ -5010,7 +5067,7 @@ LRESULT CSettings::OnEditChanged(HWND hWnd2, WPARAM wParam, LPARAM lParam)
 			if (mb_IgnoreCmdGroupEdit)
 				break;
 
-			int iCur = (int)SendDlgItemMessage(hWnd2, lbCmdTasks, LB_GETCURSEL, 0,0);
+			int iCur = CSetDlgLists::GetListboxCurSel(hWnd2, lbCmdTasks, true);
 			if (iCur < 0)
 				break;
 
@@ -5034,7 +5091,7 @@ LRESULT CSettings::OnEditChanged(HWND hWnd2, WPARAM wParam, LPARAM lParam)
 
 				mb_IgnoreCmdGroupList = true;
 				OnInitDialog_Tasks(hWnd2, false);
-				SendDlgItemMessage(hWnd2, lbCmdTasks, LB_SETCURSEL, iCur, 0);
+				CSetDlgLists::ListBoxMultiSel(hWnd2, lbCmdTasks, iCur);
 				mb_IgnoreCmdGroupList = false;
 			}
 
@@ -5693,7 +5750,9 @@ LRESULT CSettings::OnComboBox(HWND hWnd2, WPARAM wParam, LPARAM lParam)
 
 		mb_IgnoreCmdGroupEdit = true;
 		const CommandTasks* pCmd = NULL;
-		int iCur = (int)SendDlgItemMessage(hWnd2, lbCmdTasks, LB_GETCURSEL, 0,0);
+		int* Items = NULL;
+		int iSelCount = CSetDlgLists::GetListboxSelection(hWnd2, lbCmdTasks, Items);
+		int iCur = (iSelCount == 1) ? Items[0] : -1;
 		if (iCur >= 0)
 			pCmd = gpSet->CmdTaskGet(iCur);
 		BOOL lbEnable = FALSE;
@@ -5729,6 +5788,7 @@ LRESULT CSettings::OnComboBox(HWND hWnd2, WPARAM wParam, LPARAM lParam)
 		//	EnableWindow(GetDlgItem(hWnd2, SettingsNS::nTaskCtrlId[i]), lbEnable);
 		CSetDlgLists::EnableDlgItems(hWnd2, CSetDlgLists::eTaskCtrlId, lbEnable);
 		mb_IgnoreCmdGroupEdit = false;
+		delete[] Items;
 
 		break;
 	} // lbCmdTasks:
@@ -6950,8 +7010,7 @@ INT_PTR CSettings::pageOpProc(HWND hWnd2, UINT messg, WPARAM wParam, LPARAM lPar
 				gpSetCls->OnInitDialog_Debug(hWnd2);
 			break;
 		case IDD_SPG_UPDATE:
-			if (bInitial)
-				gpSetCls->OnInitDialog_Update(hWnd2);
+			gpSetCls->OnInitDialog_Update(hWnd2, bInitial);
 			break;
 		case IDD_SPG_INFO:
 			if (bInitial)
@@ -8727,14 +8786,18 @@ void CSettings::UpdatePos(int ax, int ay, bool bGetRect)
 
 	if ((gpConEmu->wndX != x) || (gpConEmu->wndY != y))
 	{
-		gpConEmu->wndX = x;
-		gpConEmu->wndY = y;
+		if (gpConEmu->wndX != x)
+			gpConEmu->wndX = x;
+		if (gpConEmu->wndY != y)
+			gpConEmu->wndY = y;
 	}
 
 	if (gpSet->isUseCurrentSizePos)
 	{
-		gpSet->_wndX = x;
-		gpSet->_wndY = y;
+		if (gpSet->_wndX != x)
+			gpSet->_wndX = x;
+		if (gpSet->_wndY != y)
+			gpSet->_wndY = y;
 	}
 
 	HWND hSizePosPg = GetPage(thi_SizePos);
@@ -8746,12 +8809,9 @@ void CSettings::UpdatePos(int ax, int ay, bool bGetRect)
 		mb_IgnoreEditChanged = FALSE;
 	}
 
-	if (isAdvLogging >= 2)
-	{
-		wchar_t szLabel[128];
-		_wsprintf(szLabel, SKIPLEN(countof(szLabel)) L"UpdatePos A={%i,%i} C={%i,%i} S={%i,%i}", ax,ay, gpConEmu->wndX, gpConEmu->wndY, gpSet->_wndX, gpSet->_wndY);
-		gpConEmu->LogWindowPos(szLabel);
-	}
+	wchar_t szLabel[128];
+	_wsprintf(szLabel, SKIPLEN(countof(szLabel)) L"UpdatePos A={%i,%i} C={%i,%i} S={%i,%i}", ax,ay, gpConEmu->wndX, gpConEmu->wndY, gpSet->_wndX, gpSet->_wndY);
+	gpConEmu->LogWindowPos(szLabel);
 }
 
 void CSettings::UpdateSize(const CESize w, const CESize h)
@@ -8793,14 +8853,11 @@ void CSettings::UpdateSize(const CESize w, const CESize h)
 		CSetDlgLists::EnableDlgItems(hSizePosPg, CSetDlgLists::eSizeCtrlId, bNormalChecked);
 	}
 
-	if (isAdvLogging >= 2)
-	{
-		wchar_t szLabel[128];
-		CESize ws = {w.Raw};
-		CESize hs = {h.Raw};
-		_wsprintf(szLabel, SKIPLEN(countof(szLabel)) L"UpdateSize A={%s,%s} C={%s,%s} S={%s,%s}", ws.AsString(), hs.AsString(), gpConEmu->WndWidth.AsString(), gpConEmu->WndHeight.AsString(), gpSet->wndWidth.AsString(), gpSet->wndHeight.AsString());
-		gpConEmu->LogWindowPos(szLabel);
-	}
+	wchar_t szLabel[128];
+	CESize ws = {w.Raw};
+	CESize hs = {h.Raw};
+	_wsprintf(szLabel, SKIPLEN(countof(szLabel)) L"UpdateSize A={%s,%s} C={%s,%s} S={%s,%s}", ws.AsString(), hs.AsString(), gpConEmu->WndWidth.AsString(), gpConEmu->WndHeight.AsString(), gpSet->wndWidth.AsString(), gpSet->wndHeight.AsString());
+	gpConEmu->LogWindowPos(szLabel);
 }
 
 // Пожалуй, не будем автоматически менять флажок "Monospace"
@@ -11953,6 +12010,7 @@ bool CSettings::CheckConsoleFontFast(LPCWSTR asCheckName /*= NULL*/)
 
 			free(lpOutl);
 		}
+		DeleteObject(hf);
 	}
 
 	// Если успешно - проверить зарегистрированность в реестре
@@ -12766,7 +12824,10 @@ void CSettings::ClearPages()
 	for (ConEmuSetupPages *p = m_Pages; p->PageID; p++)
 	{
 		if (p->pDpiAware)
+		{
 			p->pDpiAware->Detach();
+			SafeDelete(p->pDpiAware);
+		}
 		SafeDelete(p->pDialog);
 		p->hPage = NULL;
 		p->DpiChanged = false;

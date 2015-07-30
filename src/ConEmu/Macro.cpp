@@ -1572,12 +1572,15 @@ LPWSTR ConEmuMacro::FindFarWindow(GuiMacro* p, CRealConsole* apRCon, bool abFrom
 	int nWindowType = 0;
 	LPWSTR pszName = NULL;
 
-	if (!p->GetStrArg(0, pszName))
-		return lstrdup(L"");
+	if (!p->GetIntArg(0, nWindowType))
+		return lstrdup(L"InvalidArg");
+
+	if (!p->GetStrArg(1, pszName))
+		return lstrdup(L"InvalidArg");
 
 	// Пустые строки не допускаются
 	if (!pszName || !*pszName)
-		return lstrdup(L"");
+		return lstrdup(L"InvalidArg");
 
 	return FindFarWindowHelper(nWindowType, pszName, apRCon, abFromPlugin);
 }
@@ -2770,7 +2773,7 @@ LPWSTR ConEmuMacro::GetInfo(GuiMacro* p, CRealConsole* apRCon, bool abFromPlugin
 		if (lstrcmpi(pszName, L"PID") == 0)
 			_itow(GetCurrentProcessId(), szTemp, 10);
 		else if (lstrcmpi(pszName, L"HWND") == 0)
-			msprintf(szTemp, countof(szTemp), L"0x%08X", (DWORD)ghWnd);
+			msprintf(szTemp, countof(szTemp), L"0x%08X", LODWORD(ghWnd));
 		else if (lstrcmpi(pszName, L"Build") == 0)
 			wcscpy_c(szTemp, gpConEmu->ms_ConEmuBuild);
 		else if (lstrcmpi(pszName, L"Drive") == 0)
@@ -2793,9 +2796,9 @@ LPWSTR ConEmuMacro::GetInfo(GuiMacro* p, CRealConsole* apRCon, bool abFromPlugin
 		else if (lstrcmpi(pszName, L"ServerPID") == 0)
 			_itow(apRCon ? apRCon->GetServerPID(true) : 0, szTemp, 10);
 		else if (lstrcmpi(pszName, L"DrawHWND") == 0)
-			msprintf(szTemp, countof(szTemp), L"0x%08X", (DWORD)(apRCon ? apRCon->VCon()->GetView() : 0));
+			msprintf(szTemp, countof(szTemp), L"0x%08X", (apRCon ? LODWORD(apRCon->VCon()->GetView()) : 0));
 		else if (lstrcmpi(pszName, L"BackHWND") == 0)
-			msprintf(szTemp, countof(szTemp), L"0x%08X", (DWORD)(apRCon ? apRCon->VCon()->GetBack() : 0));
+			msprintf(szTemp, countof(szTemp), L"0x%08X", (apRCon ? LODWORD(apRCon->VCon()->GetBack()) : 0));
 		else if (lstrcmpi(pszName, L"WorkDir") == 0)
 			pszVal = apRCon ? apRCon->GetConsoleStartDir(szDir) : L"";
 		else if (lstrcmpi(pszName, L"CurDir") == 0)
@@ -3174,7 +3177,7 @@ LPWSTR ConEmuMacro::Shell(GuiMacro* p, CRealConsole* apRCon, bool abFromPlugin)
 			}
 			else
 			{
-				int nRc = (int)ShellExecuteW(ghWnd, pszOper, pszFile, pszParm, pszDir, nShowCmd);
+				INT_PTR nRc = (INT_PTR)ShellExecuteW(ghWnd, pszOper, pszFile, pszParm, pszDir, nShowCmd);
 
 				if (nRc <= 32)
 				{
@@ -3448,6 +3451,19 @@ LPWSTR ConEmuMacro::Tab(GuiMacro* p, CRealConsole* apRCon, bool abFromPlugin)
 			{
 				gpConEmu->ConActivate(nParm-1);
 				pszResult = lstrdup(L"OK");
+			}
+			break;
+		case ctc_ActivateByName: // activate console by renamed title, console title, active process name, root process name
+			if (p->IsStrArg(1))
+			{
+				LPWSTR pszName = NULL;
+				if (p->GetStrArg(1, pszName))
+				{
+					if (gpConEmu->ConActivateByName(pszName))
+						pszResult = lstrdup(L"OK");
+					else
+						pszResult = lstrdup(L"NotFound");
+				}
 			}
 			break;
 		case ctc_ShowTabsList: //

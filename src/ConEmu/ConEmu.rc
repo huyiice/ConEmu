@@ -670,13 +670,10 @@ BEGIN
     GROUPBOX        "Miscellaneous options",gbFeatureMisc,4,1,319,27
     CONTROL         "Auto register fonts",cbAutoRegFonts,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,10,13,110,8
     CONTROL         "Monitor console lang",cbMonitorConsoleLang,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,128,13,99,8
-    CONTROL         "Show real console",cbVisible,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,231,157,74,8
-    PUSHBUTTON      "...",bRealConsoleSettings,306,156,13,11
-    CONTROL         "Debug steps in caption",cbDebugSteps,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,128,157,99,8
-    CONTROL         "Sleep in background",cbSleepInBackground,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,10,47,110,8
     CONTROL         "Focus in child windows",cbFocusInChildWindows,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,231,13,87,8
+    GROUPBOX        "CPU consuming",gbFeatureRetard,4,34,319,29
+    CONTROL         "Sleep in background",cbSleepInBackground,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,10,47,110,8
     CONTROL         "Retard inactive panes",cbRetardInactivePanes,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,128,47,99,8
-    CONTROL         "Disable all flashing",cbDisableAllFlashing,"Button",BS_AUTO3STATE | WS_TABSTOP,128,97,99,8
     GROUPBOX        "In-console options",gbFeatureInConsole,4,69,319,71
     CONTROL         "Inject ConEmuHk",cbUseInjects,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,11,82,110,8
     CONTROL         "DosBox (DOS apps)",cbDosBox,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,128,81,76,8
@@ -684,18 +681,21 @@ BEGIN
     CONTROL         "Use Clink in prompt",cbUseClink,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,231,81,75,8
     PUSHBUTTON      "...",cbClinkWebPage,306,79,13,11
     CONTROL         "ANSI X3.64 / xterm 256 colors",cbProcessAnsi,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,11,97,110,8
-    CONTROL         "Process '-new_console' and '-cur_console' switches",cbProcessNewConArg,
-                    "Button",BS_AUTOCHECKBOX | WS_TABSTOP,11,125,187,8
-    CONTROL         "Log console output (*)",cbAnsiLog,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,11,111,110,8
-    EDITTEXT        tAnsiLogPath,128,109,191,12,ES_AUTOHSCROLL
-    CONTROL         "Exception handler (debug)",cbConsoleExceptionHandler,
-                    "Button",BS_AUTOCHECKBOX | WS_TABSTOP,12,157,110,8
+    CONTROL         "Disable all flashing",cbDisableAllFlashing,"Button",BS_AUTO3STATE | WS_TABSTOP,128,97,99,8
     CONTROL         "Portable registry",cbPortableRegistry,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,231,97,71,8
     PUSHBUTTON      "...",bPortableRegistrySettings,306,96,13,11,WS_DISABLED
-    CONTROL         "Suppress bells",cbSuppressBells,"Button",BS_AUTOCHECKBOX | NOT WS_VISIBLE | WS_DISABLED | WS_TABSTOP,231,213,87,8
+    CONTROL         "Log console output (*)",cbAnsiLog,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,11,111,110,8
+    EDITTEXT        tAnsiLogPath,128,109,191,12,ES_AUTOHSCROLL
+    CONTROL         "Process '-new_console' and '-cur_console' switches",cbProcessNewConArg,
+                    "Button",BS_AUTOCHECKBOX | WS_TABSTOP,11,125,187,8
     CONTROL         "Process 'start'",cbProcessCmdStart,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,231,125,88,8
     GROUPBOX        "Debugging options",gbFeatureDebug,4,144,319,28
-    GROUPBOX        "CPU consuming",gbFeatureRetard,4,34,319,29
+    CONTROL         "Exception handler (debug)",cbConsoleExceptionHandler,
+                    "Button",BS_AUTOCHECKBOX | WS_TABSTOP,12,157,110,8
+    CONTROL         "Debug steps in caption",cbDebugSteps,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,128,157,99,8
+    CONTROL         "Show real console",cbVisible,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,231,157,74,8
+    PUSHBUTTON      "...",bRealConsoleSettings,306,156,13,11
+    CONTROL         "Suppress bells",cbSuppressBells,"Button",BS_AUTOCHECKBOX | NOT WS_VISIBLE | WS_DISABLED | WS_TABSTOP,231,213,87,8
 END
 
 IDD_SPG_COMSPEC DIALOGEX 0, 0, 328, 235
@@ -882,9 +882,9 @@ BEGIN
     CONTROL         "Add %ConEmuBaseDir% to %PATH%",cbAddConEmuBase2Path,
                     "Button",BS_AUTOCHECKBOX | WS_TABSTOP,165,14,152,8
     GROUPBOX        "Set up environment variables, cmd.exe aliases, codepage",gbSetAlias,4,35,319,195
-    LTEXT           "Here you may set up your environment variables, default code page, and so on...",stSetCommands,10,47,307,10,SS_NOPREFIX
-    EDITTEXT        tSetCommands,9,104,309,121,ES_MULTILINE | ES_AUTOVSCROLL | ES_AUTOHSCROLL | ES_NOHIDESEL | ES_WANTRETURN | WS_VSCROLL | WS_HSCROLL
-    LTEXT           "set HOME=C:\\DB\\Home\r\nset ""PATH=%ConEmuBaseDir%\\Scripts;%PATH%""\r\nchcp utf-8\r\nalias st=start $* -cur_console:n\r\nalias sudo=ConEmuC -c $* -new_console:a",stSetCommands2,22,59,192,39,SS_NOPREFIX
+    LTEXT           "Here you may set up your environment variables, default code page, and so on...\r\nOne line may have only one command! You may comment lines with # sign.",stSetCommands,10,47,307,17,SS_NOPREFIX
+    EDITTEXT        tSetCommands,9,111,309,114,ES_MULTILINE | ES_AUTOVSCROLL | ES_AUTOHSCROLL | ES_NOHIDESEL | ES_WANTRETURN | WS_VSCROLL | WS_HSCROLL
+    LTEXT           "set HOME=C:\\My Tools\\Home\r\nset PATH=%ConEmuBaseDir%\\Scripts;%PATH%\r\nchcp utf-8\r\nalias st=start $* -cur_console:n\r\nalias sudo=ConEmuC -c $* -new_console:a",stSetCommands2,22,65,192,40,SS_NOPREFIX
 END
 
 IDD_SPG_MARKCOPY DIALOGEX 0, 0, 328, 235
@@ -1196,7 +1196,7 @@ BEGIN
     CONTROL         "Change prompt (cmd, powershell) text cursor position with Left Click",cbCTSClickPromptPosition,
                     "Button",BS_AUTO3STATE | WS_TABSTOP,11,156,237,8
     COMBOBOX        lbCTSClickPromptPosition,250,154,67,30,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
-    CONTROL         "Delete word leftward to the cursor (default Ctrl+BackSpace)",cbCTSDeleteLeftWord,
+    CONTROL         "Ctrl+BackSpace - delete word leftward to the text cursor",cbCTSDeleteLeftWord,
                     "Button",BS_AUTO3STATE | WS_TABSTOP,11,169,306,8
     GROUPBOX        "Mouse button actions",IDC_STATIC,4,188,319,30
     CONTROL         "",rbCTSActAlways,"Button",BS_AUTORADIOBUTTON,11,202,10,8
@@ -1213,37 +1213,40 @@ STYLE DS_SETFONT | DS_FIXEDSYS | DS_CONTROL | WS_CHILD
 EXSTYLE WS_EX_CONTROLPARENT
 FONT 8, "MS Shell Dlg", 0, 0, 0x1
 BEGIN
-    CONTROL         "Check on startup",cbUpdateCheckOnStartup,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,10,13,70,8
-    CONTROL         "Hourly",cbUpdateCheckHourly,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,83,13,34,8
-    CONTROL         "Show TSA balloon",cbUpdateConfirmDownload,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,121,13,73,8
-    CONTROL         "Stable",rbUpdateStableOnly,"Button",BS_AUTORADIOBUTTON,200,13,38,8
-    CONTROL         "Preview",rbUpdatePreview,"Button",BS_AUTORADIOBUTTON,240,13,38,8
-    CONTROL         "Latest",rbUpdateLatestAvailable,"Button",BS_AUTORADIOBUTTON,280,13,38,8
-    GROUPBOX        "",IDC_STATIC,4,30,319,27
-    CONTROL         "Use proxy",cbUpdateUseProxy,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,10,29,51,10
-    LTEXT           "Server:port",stUpdateProxy,10,41,42,8,WS_DISABLED
-    EDITTEXT        tUpdateProxy,56,39,90,13,ES_AUTOHSCROLL | WS_DISABLED
-    RTEXT           "User",stUpdateProxyUser,147,41,19,8,WS_DISABLED
-    EDITTEXT        tUpdateProxyUser,169,39,54,13,ES_AUTOHSCROLL | WS_DISABLED
-    RTEXT           "Password",stUpdateProxyPassword,225,41,34,8,WS_DISABLED
-    EDITTEXT        tUpdateProxyPassword,263,39,54,13,ES_PASSWORD | ES_AUTOHSCROLL | WS_DISABLED
+    GROUPBOX        "Update settings",gbUpdate,4,1,319,230
+    LTEXT           "Do automatic check on",stUpdateCheck,10,13,87,8
+    CONTROL         "Startup",cbUpdateCheckOnStartup,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,104,13,51,8
+    CONTROL         "Hourly",cbUpdateCheckHourly,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,158,13,47,8
+    CONTROL         "TSA notification only",cbUpdateConfirmDownload,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,218,13,97,8
+    LTEXT           "Preferred release type",stUpdateReleaseType,10,28,87,8
+    CONTROL         "Stable",rbUpdateStableOnly,"Button",BS_AUTORADIOBUTTON | WS_DISABLED,104,29,51,8
+    CONTROL         "Preview",rbUpdatePreview,"Button",BS_AUTORADIOBUTTON,159,29,51,8
+    CONTROL         "Latest",rbUpdateLatestAvailable,"Button",BS_AUTORADIOBUTTON,218,29,51,8
+    CONTROL         "External downloader",cbUpdateInetTool,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,10,45,87,10
+    EDITTEXT        tUpdateInetTool,103,43,194,13,ES_AUTOHSCROLL
+    PUSHBUTTON      "...",cbUpdateInetToolPath,302,43,15,13
+    CONTROL         "Proxy",cbUpdateUseProxy,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,10,65,39,8
+    RTEXT           "Server:port",stUpdateProxy,55,65,42,8,WS_DISABLED
+    EDITTEXT        tUpdateProxy,103,63,62,13,ES_AUTOHSCROLL | WS_DISABLED
+    RTEXT           "User",stUpdateProxyUser,167,65,27,8,WS_DISABLED
+    EDITTEXT        tUpdateProxyUser,197,63,39,13,ES_AUTOHSCROLL | WS_DISABLED
+    RTEXT           "Password",stUpdateProxyPassword,241,65,34,8,WS_DISABLED
+    EDITTEXT        tUpdateProxyPassword,278,63,39,13,ES_PASSWORD | ES_AUTOHSCROLL | WS_DISABLED
+    CONTROL         "Leave downloaded packages",cbUpdateLeavePackages,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,10,85,126,10
+    EDITTEXT        tUpdateDownloadPath,138,84,159,13,ES_AUTOHSCROLL
+    PUSHBUTTON      "...",cbUpdateDownloadPath,302,84,15,13
+    LTEXT           "Update command (%1 - package, %2 - ConEmu.exe folder, %3 - x86/x64, %4 - PID)",stUpdateCommand,12,102,310,8
     CONTROL         "Installer (ConEmuSetup.exe /p:%s)",rbUpdateUseExe,
-                    "Button",BS_AUTORADIOBUTTON | WS_DISABLED,12,99,151,10
+                    "Button",BS_AUTORADIOBUTTON | WS_DISABLED,21,112,151,10
+    EDITTEXT        tUpdateExeCmdLine,21,124,295,14,ES_AUTOHSCROLL
     CONTROL         "7-Zip archieve (ConEmu.7z), WinRar or 7-Zip required",rbUpdateUseArc,
-                    "Button",BS_AUTORADIOBUTTON | WS_DISABLED,12,128,226,10
-    GROUPBOX        "Download path",IDC_STATIC,5,59,319,28
-    EDITTEXT        tUpdateDownloadPath,10,69,160,13,ES_AUTOHSCROLL
-    PUSHBUTTON      "...",cbUpdateDownloadPath,173,68,15,13
-    CONTROL         "Leave downloaded packages",cbUpdateLeavePackages,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,195,70,113,10
-    GROUPBOX        "Post-update command, don't forget ‘call’ for batches",IDC_STATIC,5,161,319,30
-    EDITTEXT        tUpdatePostUpdateCmd,10,172,310,13,ES_AUTOHSCROLL
-    GROUPBOX        "Update settings",IDC_STATIC,4,1,319,27
-    EDITTEXT        tUpdateArcCmdLine,10,140,290,13,ES_AUTOHSCROLL
-    PUSHBUTTON      "...",cbUpdateArcCmdLine,305,140,15,13
-    EDITTEXT        tUpdateVerLocation,10,204,310,13,ES_AUTOHSCROLL | ES_READONLY
-    EDITTEXT        tUpdateExeCmdLine,10,111,310,14,ES_AUTOHSCROLL
-    GROUPBOX        "Update command (%1 - package, %2 - ConEmu.exe folder, %3 - x86/x64, %4 - PID)",IDC_STATIC,6,89,319,70
-    GROUPBOX        "ConEmu latest version location info",IDC_STATIC,5,193,319,28
+                    "Button",BS_AUTORADIOBUTTON | WS_DISABLED,21,141,226,10
+    EDITTEXT        tUpdateArcCmdLine,21,153,276,13,ES_AUTOHSCROLL
+    PUSHBUTTON      "...",cbUpdateArcCmdLine,301,153,15,13
+    LTEXT           "Post-update command, don't forget ‘call’ for batches",stUpdatePostCommand,12,173,310,8
+    EDITTEXT        tUpdatePostUpdateCmd,21,185,295,13,ES_AUTOHSCROLL
+    LTEXT           "ConEmu latest version location info",stUpdateVerLocation,12,201,310,8
+    EDITTEXT        tUpdateVerLocation,21,212,295,13,ES_AUTOHSCROLL | ES_READONLY
 END
 
 IDD_FAST_CONFIG DIALOGEX 0, 0, 323, 305
@@ -1274,7 +1277,7 @@ BEGIN
                     "Button",BS_AUTOCHECKBOX | WS_TABSTOP,11,176,295,10
     LTEXT           "You can change following on 'Update' page of Settings dialog later",stEnableAutoUpdateFast,11,192,302,8
     CONTROL         "Enable automatic updates",cbEnableAutoUpdateFast,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,11,203,109,10
-    CONTROL         "‘Stable’",rbAutoUpdateStableFast,"Button",BS_AUTORADIOBUTTON,128,203,46,10
+    CONTROL         "‘Stable’",rbAutoUpdateStableFast,"Button",BS_AUTORADIOBUTTON | WS_DISABLED,128,203,46,10
     CONTROL         "‘Preview’",rbAutoUpdatePreviewFast,"Button",BS_AUTORADIOBUTTON,178,203,50,10
     CONTROL         "‘Developer’ builds",rbAutoUpdateDeveloperFast,"Button",BS_AUTORADIOBUTTON,232,203,71,10
     GROUPBOX        "",gbDisableConImeFast,3,222,317,61
@@ -1295,7 +1298,7 @@ EXSTYLE WS_EX_CONTROLPARENT
 FONT 8, "MS Shell Dlg", 0, 0, 0x1
 BEGIN
     GROUPBOX        "&Predefined tasks (command groups)",gbCmdTasks,4,1,319,230
-    LISTBOX         lbCmdTasks,9,12,93,163,LBS_USETABSTOPS | LBS_NOINTEGRALHEIGHT | WS_VSCROLL | WS_HSCROLL | WS_TABSTOP
+    LISTBOX         lbCmdTasks,9,12,93,163,LBS_USETABSTOPS | LBS_NOINTEGRALHEIGHT | LBS_EXTENDEDSEL | WS_VSCROLL | WS_HSCROLL | WS_TABSTOP
     EDITTEXT        tCmdGroupName,109,12,81,12,ES_AUTOHSCROLL
     LTEXT           "&Commands (application, arguments, ""-new_console"" params)\nDelimit commands with empty lines\nEach command creates tab in ConEmu when group started\nMark active console tab with '>' sign\nStart console 'As Administrator' with '*' sign",stCmdGroupCommands,111,81,208,41
     EDITTEXT        tCmdGroupCommands,109,125,208,85,ES_MULTILINE | ES_AUTOVSCROLL | ES_WANTRETURN | WS_VSCROLL

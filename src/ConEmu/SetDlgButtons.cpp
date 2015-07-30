@@ -115,6 +115,20 @@ bool CSetDlgButtons::checkRadioButton(HWND hParent, int nIDFirstButton, int nIDL
 	return (bRc != FALSE);
 }
 
+void CSetDlgButtons::enableDlgItems(HWND hParent, UINT* pnCtrlID, INT_PTR nCount, bool bEnabled)
+{
+	for (INT_PTR i = 0; i < nCount; i++)
+	{
+		HWND hItem = GetDlgItem(hParent, pnCtrlID[i]);
+		if (!hItem)
+		{
+			_ASSERTE(GetDlgItem(hParent, pnCtrlID[i])!=NULL);
+			continue;
+		}
+		EnableWindow(hItem, bEnabled);
+	}
+}
+
 // FALSE - выключена
 // TRUE (BST_CHECKED) - включена
 // BST_INDETERMINATE (2) - 3-d state
@@ -800,6 +814,12 @@ bool CSetDlgButtons::ProcessButtonClick(HWND hDlg, WORD CB, BYTE uCheck)
 		case rbUpdateLatestAvailable:
 			OnBtn_UpdateTypeRadio(hDlg, CB, uCheck);
 			break;
+		case cbUpdateInetTool:
+			OnBtn_UpdateInetTool(hDlg, CB, uCheck);
+			break;
+		case cbUpdateInetToolPath:
+			OnBtn_UpdateInetToolCmd(hDlg, CB, uCheck);
+			break;
 		case cbUpdateUseProxy:
 			OnBtn_UpdateUseProxy(hDlg, CB, uCheck);
 			break;
@@ -1126,7 +1146,7 @@ void CSetDlgButtons::OnBtn_CmdTasksFlags(HWND hDlg, WORD CB, BYTE uCheck)
 	if (!hDlg)
 		return;
 
-	int iCur = (int)SendDlgItemMessage(hDlg, lbCmdTasks, LB_GETCURSEL, 0,0);
+	int iCur = CSetDlgLists::GetListboxCurSel(hDlg, lbCmdTasks, true);
 	if (iCur < 0)
 		return;
 
@@ -1202,7 +1222,7 @@ void CSetDlgButtons::OnBtn_CmdTasksAdd(HWND hDlg, WORD CB, BYTE uCheck)
 
 	gpSetCls->OnInitDialog_Tasks(hDlg, false);
 
-	SendDlgItemMessage(hDlg, lbCmdTasks, LB_SETCURSEL, iCount, 0);
+	CSetDlgLists::ListBoxMultiSel(hDlg, lbCmdTasks, iCount);
 	gpSetCls->OnComboBox(hDlg, MAKELONG(lbCmdTasks,LBN_SELCHANGE), 0);
 
 } // cbCmdTasksAdd
@@ -1213,43 +1233,68 @@ void CSetDlgButtons::OnBtn_CmdTasksDel(HWND hDlg, WORD CB, BYTE uCheck)
 {
 	_ASSERTE(CB==cbCmdTasksDel);
 
-	int iCur = (int)SendDlgItemMessage(hDlg, lbCmdTasks, LB_GETCURSEL, 0,0);
-	if (iCur < 0)
+	int *Selected = NULL, iCount = CSetDlgLists::GetListboxSelection(hDlg, lbCmdTasks, Selected);
+	if (iCount <= 0)
 		return;
 
-	const CommandTasks* p = gpSet->CmdTaskGet(iCur);
-	if (!p)
-		return;
-
+	const CommandTasks* p = NULL;
 	bool bIsStartup = false;
-	if (gpSet->psStartTasksName && p->pszName && (lstrcmpi(gpSet->psStartTasksName, p->pszName) == 0))
-		bIsStartup = true;
+
+	for (INT_PTR i = iCount-1; i >= 0; i--)
+	{
+		p = gpSet->CmdTaskGet(Selected[iCount-1]);
+		if (!p)
+		{
+			_ASSERTE(FALSE && "Failed to get selected task");
+			delete[] Selected;
+			return;
+		}
+
+		if (gpSet->psStartTasksName && p->pszName && (lstrcmpi(gpSet->psStartTasksName, p->pszName) == 0))
+			bIsStartup = true;
+	}
 
 	size_t cchMax = (p->pszName ? _tcslen(p->pszName) : 0) + 200;
 	wchar_t* pszMsg = (wchar_t*)malloc(cchMax*sizeof(*pszMsg));
 	if (!pszMsg)
+	{
+		delete[] Selected;
 		return;
+	}
 
-	_wsprintf(pszMsg, SKIPLEN(cchMax) L"%sDelete command group %s?",
+	wchar_t szOthers[64] = L"";
+	if (iCount > 1)
+		_wsprintf(szOthers, SKIPCOUNT(szOthers) L"\n" L"and %i other task(s)", (iCount-1));
+
+	_wsprintf(pszMsg, SKIPLEN(cchMax) L"%sDelete command group\n%s%s?",
 		bIsStartup ? L"Warning! You about to delete startup task!\n\n" : L"",
-		p->pszName ? p->pszName : L"{???}");
+		p->pszName ? p->pszName : L"{???}",
+		szOthers);
 
 	int nBtn = MsgBox(pszMsg, MB_YESNO|(bIsStartup ? MB_ICONEXCLAMATION : MB_ICONQUESTION), NULL, ghOpWnd);
 	SafeFree(pszMsg);
 
 	if (nBtn != IDYES)
+	{
+		delete[] Selected;
 		return;
+	}
 
-	gpSet->CmdTaskSet(iCur, NULL, NULL, NULL);
+	for (INT_PTR i = iCount-1; i >= 0; i--)
+	{
+		gpSet->CmdTaskSet(Selected[i], NULL, NULL, NULL);
 
-	if (bIsStartup && gpSet->psStartTasksName)
-		*gpSet->psStartTasksName = 0;
+		if (bIsStartup && gpSet->psStartTasksName)
+			*gpSet->psStartTasksName = 0;
+	}
 
 	gpSetCls->OnInitDialog_Tasks(hDlg, false);
 
-	int iCount = (int)SendDlgItemMessage(hDlg, lbCmdTasks, LB_GETCOUNT, 0,0);
-	SendDlgItemMessage(hDlg, lbCmdTasks, LB_SETCURSEL, min(iCur,(iCount-1)), 0);
+	iCount = (int)SendDlgItemMessage(hDlg, lbCmdTasks, LB_GETCOUNT, 0,0);
+	CSetDlgLists::ListBoxMultiSel(hDlg, lbCmdTasks, min(Selected[0],(iCount-1)));
 	gpSetCls->OnComboBox(hDlg, MAKELONG(lbCmdTasks,LBN_SELCHANGE), 0);
+
+	delete[] Selected;
 
 } // cbCmdTasksDel
 
@@ -1260,7 +1305,7 @@ void CSetDlgButtons::OnBtn_CmdTasksUpDown(HWND hDlg, WORD CB, BYTE uCheck)
 	_ASSERTE(CB==cbCmdTasksUp || CB==cbCmdTasksDown);
 
 	int iCur, iChg;
-	iCur = (int)SendDlgItemMessage(hDlg, lbCmdTasks, LB_GETCURSEL, 0,0);
+	iCur = CSetDlgLists::GetListboxCurSel(hDlg, lbCmdTasks, true);
 	if (iCur < 0)
 		return;
 	if (CB == cbCmdTasksUp)
@@ -1281,7 +1326,8 @@ void CSetDlgButtons::OnBtn_CmdTasksUpDown(HWND hDlg, WORD CB, BYTE uCheck)
 
 	gpSetCls->OnInitDialog_Tasks(hDlg, false);
 
-	SendDlgItemMessage(hDlg, lbCmdTasks, LB_SETCURSEL, iChg, 0);
+	CSetDlgLists::ListBoxMultiSel(hDlg, lbCmdTasks, iChg);
+	gpSetCls->OnComboBox(hDlg, MAKELONG(lbCmdTasks,LBN_SELCHANGE), 0);
 
 } // cbCmdTasksUp || cbCmdTasksDown
 
@@ -1291,7 +1337,7 @@ void CSetDlgButtons::OnBtn_CmdGroupKey(HWND hDlg, WORD CB, BYTE uCheck)
 {
 	_ASSERTE(CB==cbCmdGroupKey);
 
-	int iCur = (int)SendDlgItemMessage(hDlg, lbCmdTasks, LB_GETCURSEL, 0,0);
+	int iCur = CSetDlgLists::GetListboxCurSel(hDlg, lbCmdTasks, true);
 	if (iCur < 0)
 		return;
 	const CommandTasks* pCmd = gpSet->CmdTaskGet(iCur);
@@ -1472,12 +1518,15 @@ void CSetDlgButtons::OnBtn_AddDefaults(HWND hDlg, WORD CB, BYTE uCheck)
 {
 	_ASSERTE(CB==cbAddDefaults);
 
-	if (MsgBox(L"Do you want to ADD default tasks in your task list?",
-			MB_YESNO|MB_ICONEXCLAMATION, gpConEmu->GetDefaultTitle(), ghOpWnd) != IDYES)
+	int iBtn = MsgBox(
+		L"Do you want to ADD NEW default tasks in your task list?\n\n"
+		L"Choose <No> to REWRITE EXISTING tasks with defaults too."
+		, MB_YESNOCANCEL|MB_ICONEXCLAMATION, gpConEmu->GetDefaultTitle(), ghOpWnd);
+	if (iBtn == IDCANCEL)
 		return;
 
-	// Добавить таски В КОНЕЦ
-	CreateDefaultTasks(slf_AppendTasks);
+	// Append or rewrite default tasks
+	CreateDefaultTasks(slf_AppendTasks|((iBtn == IDNO) ? slf_RewriteExisting : slf_None));
 
 	// Обновить список на экране
 	gpSetCls->OnInitDialog_Tasks(hDlg, true);
@@ -4083,23 +4132,66 @@ void CSetDlgButtons::OnBtn_UpdateTypeRadio(HWND hDlg, WORD CB, BYTE uCheck)
 } // rbUpdateStableOnly || rbUpdatePreview || rbUpdateLatestAvailable
 
 
+// cbUpdateInetTool
+void CSetDlgButtons::OnBtn_UpdateInetTool(HWND hDlg, WORD CB, BYTE uCheck)
+{
+	_ASSERTE(CB==cbUpdateInetTool);
+
+	gpSet->UpdSet.isUpdateInetTool = (uCheck != BST_UNCHECKED);
+	bool bEnabled = (gpSet->UpdSet.isUpdateInetTool);
+	UINT nItems[] = {tUpdateInetTool, cbUpdateInetToolPath};
+	enableDlgItems(hDlg, nItems, countof(nItems), bEnabled);
+	SetDlgItemText(hDlg, tUpdateInetTool, gpSet->UpdSet.GetUpdateInetToolCmd());
+
+	// Enable/Disable ‘Proxy’ fields too
+	OnBtn_UpdateUseProxy(hDlg, cbUpdateUseProxy, gpSet->UpdSet.isUpdateUseProxy?BST_CHECKED:BST_UNCHECKED);
+
+} // cbUpdateInetTool
+
+
+// cbUpdateInetToolPath
+void CSetDlgButtons::OnBtn_UpdateInetToolCmd(HWND hDlg, WORD CB, BYTE uCheck)
+{
+	_ASSERTE(CB==cbUpdateInetToolPath);
+
+	wchar_t szInetExe[MAX_PATH] = {};
+	OPENFILENAME ofn = {sizeof(ofn)};
+	ofn.hwndOwner = ghOpWnd;
+	ofn.lpstrFilter = L"Exe files (*.exe)\0*.exe\0\0";
+	ofn.nFilterIndex = 1;
+
+	ofn.lpstrFile = szInetExe;
+	ofn.nMaxFile = countof(szInetExe);
+	ofn.lpstrTitle = L"Choose downloader tool";
+	ofn.lpstrDefExt = L"exe";
+	ofn.Flags = OFN_ENABLESIZING|OFN_NOCHANGEDIR
+		| OFN_FILEMUSTEXIST|OFN_EXPLORER|OFN_HIDEREADONLY|OFN_OVERWRITEPROMPT;
+
+	if (GetOpenFileName(&ofn))
+	{
+		CEStr lsCmd;
+		LPCWSTR pszName = PointToName(szInetExe);
+		if (lstrcmpi(pszName, L"wget.exe") == 0)
+			lsCmd = lstrmerge(L"\"", szInetExe, L"\" %1 -O %2");
+		else if (lstrcmpi(pszName, L"curl.exe") == 0)
+			lsCmd = lstrmerge(L"\"", szInetExe, L"\" -L %1 -o %2");
+		else
+			lsCmd = lstrmerge(L"\"", szInetExe, L"\" %1 %2");
+		SetDlgItemText(hDlg, tUpdateInetTool, lsCmd.ms_Arg);
+	}
+} // cbUpdateInetToolPath
+
+
 // cbUpdateUseProxy
 void CSetDlgButtons::OnBtn_UpdateUseProxy(HWND hDlg, WORD CB, BYTE uCheck)
 {
 	_ASSERTE(CB==cbUpdateUseProxy);
 
-	gpSet->UpdSet.isUpdateUseProxy = uCheck;
+	gpSet->UpdSet.isUpdateUseProxy = (uCheck != BST_UNCHECKED);
+	bool bEnabled = (gpSet->UpdSet.isUpdateUseProxy && !gpSet->UpdSet.isUpdateInetTool);
 	UINT nItems[] = {stUpdateProxy, tUpdateProxy, stUpdateProxyUser, tUpdateProxyUser, stUpdateProxyPassword, tUpdateProxyPassword};
-	for (size_t i = 0; i < countof(nItems); i++)
-	{
-		HWND hItem = GetDlgItem(hDlg, nItems[i]);
-		if (!hItem)
-		{
-			_ASSERTE(GetDlgItem(hDlg, nItems[i])!=NULL);
-			continue;
-		}
-		EnableWindow(hItem, gpSet->UpdSet.isUpdateUseProxy);
-	}
+	enableDlgItems(hDlg, nItems, countof(nItems), bEnabled);
+
 } // cbUpdateUseProxy
 
 

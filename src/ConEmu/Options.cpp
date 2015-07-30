@@ -89,7 +89,7 @@ THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 //HWND ghOpWnd=NULL;
 
 #ifdef _DEBUG
-#define HEAPVAL //HeapValidate(GetProcessHeap(), 0, NULL);
+#define HEAPVAL HeapValidate(GetProcessHeap(), 0, NULL);
 #else
 #define HEAPVAL
 #endif
@@ -560,11 +560,13 @@ void Settings::InitSettings()
 	isTrueColorer = true; // включим по умолчанию, ибо Far3
 
 	AppStd.isExtendColors = false;
-	AppStd.nExtendColorIdx = 14;
-	AppStd.nTextColorIdx = AppStd.nBackColorIdx = 16; // Auto
-	AppStd.nPopTextColorIdx = AppStd.nPopBackColorIdx = 16; // Auto
+	AppStd.nExtendColorIdx = CEDEF_ExtendColorIdx/*14*/;
+	AppStd.nTextColorIdx = AppStd.nBackColorIdx = CEDEF_BackColorAuto/*16*/;
+	AppStd.nPopTextColorIdx = AppStd.nPopBackColorIdx = CEDEF_BackColorAuto/*16*/;
 	AppStd.isExtendFonts = false;
-	AppStd.nFontNormalColor = 1; AppStd.nFontBoldColor = 12; AppStd.nFontItalicColor = 13;
+	AppStd.nFontNormalColor = CEDEF_FontNormalColor/*1*/;
+	AppStd.nFontBoldColor = CEDEF_FontBoldColor/*12*/;
+	AppStd.nFontItalicColor = CEDEF_FontItalicColor/*13*/;
 	{
 		_ASSERTE(sizeof(AppStd.CursorActive) == sizeof(DWORD));
 		AppStd.CursorActive.Raw = 0; // Сброс
@@ -1190,16 +1192,16 @@ void Settings::LoadAppSettings(SettingsBase* reg, AppSettings* pApp/*, COLORREF*
 
 		reg->Load(L"ExtendColors", pApp->isExtendColors);
 		reg->Load(L"ExtendColorIdx", pApp->nExtendColorIdx);
-		if (pApp->nExtendColorIdx > 15) pApp->nExtendColorIdx=14;
+		if (pApp->nExtendColorIdx > 15) pApp->nExtendColorIdx=CEDEF_ExtendColorIdx/*14*/;
 
 		reg->Load(L"TextColorIdx", pApp->nTextColorIdx);
-		if (pApp->nTextColorIdx > 16) pApp->nTextColorIdx=16;
+		if (pApp->nTextColorIdx > 16) pApp->nTextColorIdx=CEDEF_BackColorAuto/*16*/;
 		reg->Load(L"BackColorIdx", pApp->nBackColorIdx);
-		if (pApp->nBackColorIdx > 16) pApp->nBackColorIdx=16;
+		if (pApp->nBackColorIdx > 16) pApp->nBackColorIdx=CEDEF_BackColorAuto/*16*/;
 		reg->Load(L"PopTextColorIdx", pApp->nPopTextColorIdx);
-		if (pApp->nPopTextColorIdx > 16) pApp->nPopTextColorIdx=16;
+		if (pApp->nPopTextColorIdx > 16) pApp->nPopTextColorIdx=CEDEF_BackColorAuto/*16*/;
 		reg->Load(L"PopBackColorIdx", pApp->nPopBackColorIdx);
-		if (pApp->nPopBackColorIdx > 16) pApp->nPopBackColorIdx=16;
+		if (pApp->nPopBackColorIdx > 16) pApp->nPopBackColorIdx=CEDEF_BackColorAuto/*16*/;
 	}
 	else
 	{
@@ -1467,9 +1469,9 @@ void Settings::CreatePredefinedPalettes(int iAddUserCount)
 		Palettes[n]->pszName = lstrdup(DefColors[n].pszTitle);
 		Palettes[n]->bPredefined = true;
 		Palettes[n]->isExtendColors = false;
-		Palettes[n]->nExtendColorIdx = 14;
-		Palettes[n]->nTextColorIdx = Palettes[n]->nBackColorIdx = 16; // Auto
-		Palettes[n]->nPopTextColorIdx = Palettes[n]->nPopBackColorIdx = 16; // Auto
+		Palettes[n]->nExtendColorIdx = CEDEF_ExtendColorIdx/*14*/;
+		Palettes[n]->nTextColorIdx = Palettes[n]->nBackColorIdx = CEDEF_BackColorAuto/*16*/;
+		Palettes[n]->nPopTextColorIdx = Palettes[n]->nPopBackColorIdx = CEDEF_BackColorAuto/*16*/;
 		_ASSERTE(countof(Palettes[n]->Colors)==0x20 && countof(DefColors[n].dwDefColors)==0x10);
 		memmove(Palettes[n]->Colors, DefColors[n].dwDefColors, 0x10*sizeof(Palettes[n]->Colors[0]));
 		if (DefColors[n].isIndexes())
@@ -1702,13 +1704,25 @@ const ColorPalette* Settings::PaletteFindCurrent(bool bMatchAttributes)
 		return NULL;
 	}
 
+	const ColorPalette* pFound = PaletteFindByColors(bMatchAttributes, pCur);
+
+	_ASSERTE(pFound != pCur); // pCur is expected to be StdPal ("<Current color scheme>")
+
+	// Return "<Current color scheme>" if was not found in saved palettes
+	if (!pFound)
+		pFound = pCur;
+
+	return pFound;
+}
+
+const ColorPalette* Settings::PaletteFindByColors(bool bMatchAttributes, const ColorPalette* pCur)
+{
 	const ColorPalette* pFound = NULL;
 	const ColorPalette* pPal = NULL;
 	for (int i = 0; (pPal = PaletteGetPtr(i)) != NULL; i++)
 	{
-		if ((memcmp(pCur->Colors, pPal->Colors, sizeof(pPal->Colors)) == 0)
-			&& (pCur->isExtendColors == pPal->isExtendColors)
-			&& (pCur->nExtendColorIdx == pPal->nExtendColorIdx)
+		if ((pCur->isExtendColors == pPal->isExtendColors)
+			&& (!pPal->isExtendColors || (pCur->nExtendColorIdx == pPal->nExtendColorIdx))
 			&& (!bMatchAttributes
 				|| ((pCur->nTextColorIdx == pPal->nTextColorIdx)
 					&& (pCur->nBackColorIdx == pPal->nBackColorIdx)
@@ -1716,16 +1730,16 @@ const ColorPalette* Settings::PaletteFindCurrent(bool bMatchAttributes)
 					&& (pCur->nPopBackColorIdx == pPal->nPopBackColorIdx)))
 			)
 		{
-			pFound = pPal;
-			// Do not break, prefer last palette (use saved)
+			size_t cmpSize = (pPal->isExtendColors ? 32 : 16) * sizeof(pPal->Colors[0]);
+			int iCmp = memcmp(pCur->Colors, pPal->Colors, cmpSize);
+			if (iCmp == 0)
+			{
+				pFound = pPal;
+				// Do not break, prefer last palette (use saved)
+			}
 		}
 	}
 
-	_ASSERTE(pFound != pCur); // pCur is expected to be StdPal ("<Current color scheme>")
-
-	// Return "<Current color scheme>" if was not found in saved palettes
-	if (!pFound)
-		pFound = pCur;
 	return pFound;
 }
 
@@ -1862,6 +1876,17 @@ int Settings::PaletteSetActive(LPCWSTR asName)
 // Save active colors to named palette
 void Settings::PaletteSaveAs(LPCWSTR asName)
 {
+	PaletteSaveAs(asName,
+		AppStd.isExtendColors, AppStd.nExtendColorIdx,
+		AppStd.nTextColorIdx, AppStd.nBackColorIdx,
+		AppStd.nPopTextColorIdx, AppStd.nPopBackColorIdx,
+		this->Colors, true);
+}
+
+void Settings::PaletteSaveAs(LPCWSTR asName, bool abExtendColors, BYTE anExtendColorIdx,
+		BYTE anTextColorIdx, BYTE anBackColorIdx, BYTE anPopTextColorIdx, BYTE anPopBackColorIdx,
+		const COLORREF (&aColors)[0x20], bool abSaveSettings)
+{
 	// Пользовательские палитры не могут именоваться как "<...>"
 	if (!asName || !*asName || wcspbrk(asName, L"<>"))
 	{
@@ -1917,27 +1942,30 @@ void Settings::PaletteSaveAs(LPCWSTR asName)
 	// Сохранять допускается только пользовательские палитры
 	Palettes[nIndex]->bPredefined = false;
 	Palettes[nIndex]->pszName = lstrdup(asName);
-	Palettes[nIndex]->isExtendColors = AppStd.isExtendColors;
-	Palettes[nIndex]->nExtendColorIdx = AppStd.nExtendColorIdx;
+	Palettes[nIndex]->isExtendColors = abExtendColors;
+	Palettes[nIndex]->nExtendColorIdx = anExtendColorIdx;
 
-	BOOL bTextChanged = !bNewPalette && ((Palettes[nIndex]->nTextColorIdx != AppStd.nTextColorIdx) || (Palettes[nIndex]->nBackColorIdx != AppStd.nBackColorIdx));
-	BOOL bPopupChanged = !bNewPalette && ((Palettes[nIndex]->nPopTextColorIdx != AppStd.nPopTextColorIdx) || (Palettes[nIndex]->nPopBackColorIdx != AppStd.nPopBackColorIdx));
-	Palettes[nIndex]->nTextColorIdx = AppStd.nTextColorIdx;
-	Palettes[nIndex]->nBackColorIdx = AppStd.nBackColorIdx;
-	Palettes[nIndex]->nPopTextColorIdx = AppStd.nPopTextColorIdx;
-	Palettes[nIndex]->nPopBackColorIdx = AppStd.nPopBackColorIdx;
+	BOOL bTextChanged = !bNewPalette && ((Palettes[nIndex]->nTextColorIdx != anTextColorIdx) || (Palettes[nIndex]->nBackColorIdx != anBackColorIdx));
+	BOOL bPopupChanged = !bNewPalette && ((Palettes[nIndex]->nPopTextColorIdx != anPopTextColorIdx) || (Palettes[nIndex]->nPopBackColorIdx != anPopBackColorIdx));
+	Palettes[nIndex]->nTextColorIdx = anTextColorIdx;
+	Palettes[nIndex]->nBackColorIdx = anBackColorIdx;
+	Palettes[nIndex]->nPopTextColorIdx = anPopTextColorIdx;
+	Palettes[nIndex]->nPopBackColorIdx = anPopBackColorIdx;
 
-	_ASSERTE(sizeof(Palettes[nIndex]->Colors) == sizeof(this->Colors));
-	memmove(Palettes[nIndex]->Colors, this->Colors, sizeof(Palettes[nIndex]->Colors));
+	_ASSERTE(sizeof(Palettes[nIndex]->Colors) == sizeof(aColors));
+	memmove(Palettes[nIndex]->Colors, aColors, sizeof(Palettes[nIndex]->Colors));
 	_ASSERTE(nIndex < PaletteCount);
 
-	// Теперь, собственно, пишем настройки
-	SavePalettes(NULL);
-
-	// Обновить консоли
-	if (bTextChanged || bPopupChanged)
+	if (abSaveSettings)
 	{
-		gpSetCls->UpdateTextColorSettings(bTextChanged, bPopupChanged);
+		// Save setting now
+		SavePalettes(NULL);
+
+		// Refresh all consoles
+		if (bTextChanged || bPopupChanged)
+		{
+			gpSetCls->UpdateTextColorSettings(bTextChanged, bPopupChanged);
+		}
 	}
 }
 
@@ -2224,7 +2252,9 @@ void Settings::LoadSettings(bool& rbNeedCreateVanilla, const SettingsStorage* ap
 		_ASSERTE(gpConEmu);
 		return;
 	}
-	gpConEmu->LogString(L"Settings::LoadSettings");
+	// Log xml/reg + file + config
+	CEStr lsDesc = GetStoragePlaceDescr(apStorage, L"Settings::LoadSettings");
+	gpConEmu->LogString(lsDesc.ms_Arg);
 
 	// Settings service
 	SettingsBase* reg = NULL;
@@ -2963,6 +2993,8 @@ void Settings::LoadSettings(bool& rbNeedCreateVanilla, const SettingsStorage* ap
 		reg->Load(L"Update.CheckHourly", UpdSet.isUpdateCheckHourly);
 		reg->Load(L"Update.ConfirmDownload", UpdSet.isUpdateConfirmDownload);
 		reg->Load(L"Update.UseBuilds", UpdSet.isUpdateUseBuilds); if (UpdSet.isUpdateUseBuilds>3) UpdSet.isUpdateUseBuilds = 3; // 1-stable only, 2-latest, 3-preview
+		reg->Load(L"Update.InetTool", UpdSet.isUpdateInetTool);
+		reg->Load(L"Update.InetToolCmd", &UpdSet.szUpdateInetTool);
 		reg->Load(L"Update.UseProxy", UpdSet.isUpdateUseProxy);
 		reg->Load(L"Update.Proxy", &UpdSet.szUpdateProxy);
 		reg->Load(L"Update.ProxyUser", &UpdSet.szUpdateProxyUser);
@@ -3711,6 +3743,8 @@ BOOL Settings::SaveSettings(BOOL abSilent /*= FALSE*/, const SettingsStorage* ap
 		reg->Save(L"Update.CheckHourly", UpdSet.isUpdateCheckHourly);
 		reg->Save(L"Update.ConfirmDownload", UpdSet.isUpdateConfirmDownload);
 		reg->Save(L"Update.UseBuilds", UpdSet.isUpdateUseBuilds);
+		reg->Save(L"Update.InetTool", UpdSet.isUpdateInetTool);
+		reg->Save(L"Update.InetToolCmd", UpdSet.szUpdateInetTool);
 		reg->Save(L"Update.UseProxy", UpdSet.isUpdateUseProxy);
 		reg->Save(L"Update.Proxy", UpdSet.szUpdateProxy);
 		reg->Save(L"Update.ProxyUser", UpdSet.szUpdateProxyUser);
@@ -4200,6 +4234,36 @@ void Settings::CheckConsoleSettings()
 	}
 }
 
+wchar_t* Settings::GetStoragePlaceDescr(const SettingsStorage* apStorage, LPCWSTR asPrefix)
+{
+	wchar_t* pszDescr = asPrefix ? lstrdup(asPrefix) : NULL;
+
+	if (apStorage)
+	{
+		lstrmerge(&pszDescr, L" ", apStorage->szType);
+		if (apStorage->pszFile && *apStorage->pszFile)
+			lstrmerge(&pszDescr, L" ", apStorage->pszFile);
+		if (apStorage->pszConfig && *apStorage->pszConfig)
+			lstrmerge(&pszDescr, L" -config ", apStorage->pszConfig);
+		return pszDescr;
+	}
+
+	LPCWSTR pszConfig = gpSetCls->GetConfigName();
+	LPCWSTR pszFile = gpConEmu->ConEmuXml();
+	if (pszFile && *pszFile && FileExists(pszFile))
+	{
+		lstrmerge(&pszDescr, L" ", CONEMU_CONFIGTYPE_XML, L" ", pszFile);
+		if (pszConfig && *pszConfig)
+			lstrmerge(&pszDescr, L" -config ", pszConfig);
+		return pszDescr;
+	}
+
+	lstrmerge(&pszDescr, L" ", CONEMU_CONFIGTYPE_REG,
+		(pszConfig && *pszConfig) ? L" -config " : NULL,
+		(pszConfig && *pszConfig) ? pszConfig : NULL);
+	return pszDescr;
+}
+
 SettingsBase* Settings::CreateSettings(const SettingsStorage* apStorage)
 {
 	SettingsBase* pReg = NULL;
@@ -4684,27 +4748,32 @@ COLORREF* Settings::GetColorsPrepare(COLORREF *pColors, COLORREF *pColorsFade, b
 
 	if (!*pbFadeInitialized)
 	{
-		// Для ускорения, при повторных запросах, GetFadeColor кеширует результат
-		mn_LastFadeSrc = mn_LastFadeDst = -1;
-
-		// Валидация
-		if (((int)mn_FadeHigh - (int)mn_FadeLow) < 64)
-		{
-			mn_FadeLow = DEFAULT_FADE_LOW; mn_FadeHigh = DEFAULT_FADE_HIGH;
-		}
-
-		// Prepare
-		mn_FadeMul = mn_FadeHigh - mn_FadeLow;
-		*pbFadeInitialized = true;
-
-		// Посчитать "затемненные" цвета
-		for (size_t i = 0; i < countof(ColorsFade); i++)
-		{
-			pColorsFade[i] = GetFadeColor(pColors[i]);
-		}
+		PrepareFadeColors(pColors, pColorsFade, pbFadeInitialized);
 	}
 
 	return pColorsFade;
+}
+
+void Settings::PrepareFadeColors(COLORREF *pColors, COLORREF *pColorsFade, bool* pbFadeInitialized)
+{
+	// GetFadeColor cache the result
+	mn_LastFadeSrc = mn_LastFadeDst = -1;
+
+	// Валидация
+	if (((int)mn_FadeHigh - (int)mn_FadeLow) < 64)
+	{
+		mn_FadeLow = DEFAULT_FADE_LOW; mn_FadeHigh = DEFAULT_FADE_HIGH;
+	}
+
+	// Prepare
+	mn_FadeMul = mn_FadeHigh - mn_FadeLow;
+	*pbFadeInitialized = true;
+
+	// Evaluate fade color
+	for (size_t i = 0; i < countof(ColorsFade); i++)
+	{
+		pColorsFade[i] = GetFadeColor(pColors[i]);
+	}
 }
 
 COLORREF Settings::GetFadeColor(COLORREF cr)
@@ -5163,17 +5232,17 @@ wchar_t* Settings::MSZ2LineDelimited(const wchar_t* apszLines, LPCWSTR asDelim /
 		return lstrdup(L"");
 	}
 	// Evaluate required len
-	INT_PTR nTotalLen = 0, nLen;
+	INT_PTR nTotalLen = bFinalToo ? 2 : 1, nLen;
 	INT_PTR nDelimLen = asDelim ? _tcslen(asDelim) : 0;
 	const wchar_t* psz = apszLines;
 	while (*psz)
 	{
-		nLen = _tcslen(psz)+nDelimLen;
-		psz += nLen;
-		nTotalLen += nLen;
+		nLen = _tcslen(psz);
+		psz += nLen + 1;
+		nTotalLen += nLen + nDelimLen;
 	}
 	// Buffer
-	wchar_t* pszRet = (wchar_t*)malloc((nTotalLen+1)*sizeof(*pszRet));
+	wchar_t* pszRet = (wchar_t*)malloc(nTotalLen*sizeof(*pszRet));
 	if (!pszRet)
 	{
 		_ASSERTE(pszRet);
@@ -5262,8 +5331,8 @@ wchar_t* Settings::MultiLine2MSZ(const wchar_t* apszLines, DWORD* pcbSize/*in by
 	if (apszLines && *apszLines)
 	{
 		CEStr lsLine;
-		int nLenMax = lstrlen(apszLines);
-		if ((pszDst = (wchar_t*)malloc((nLenMax+2)*sizeof(wchar_t))) == NULL)
+		INT_PTR nLenMax = lstrlen(apszLines) + 2;
+		if ((pszDst = (wchar_t*)malloc(nLenMax*sizeof(wchar_t))) == NULL)
 		{
 			_ASSERTE(FALSE && "Memory allocation failed");
 		}
@@ -5273,15 +5342,32 @@ wchar_t* Settings::MultiLine2MSZ(const wchar_t* apszLines, DWORD* pcbSize/*in by
 			LPCWSTR pszSrc = apszLines;
 			while (0 == NextLine(&pszSrc, lsLine, NLF_NONE))
 			{
+				// We can't store empty lines in the middle of MSZZ value
+				// That is a registry limitation
+				if (lsLine.IsEmpty())
+					lsLine.Set(L" ");
 				int iLineLen = lstrlen(lsLine.ms_Arg) + 1;
-				_ASSERTE((psz - pszDst + 1 + iLineLen) <= ((nLenMax+2)*sizeof(wchar_t)));
+				if ((psz - pszDst + 1 + iLineLen) >= nLenMax)
+				{
+					INT_PTR nNewLenMax = max((psz - pszDst + 1 + iLineLen), nLenMax) + 1024;
+					wchar_t* pszRealloc = (wchar_t*)realloc(pszDst, nNewLenMax*sizeof(wchar_t));
+					if (!pszRealloc)
+					{
+						_ASSERTE(FALSE && "Reallocation failed");
+						break;
+					}
+					psz = pszRealloc + (psz - pszDst);
+					pszDst = pszRealloc;
+					nLenMax = nNewLenMax;
+				}
+				_ASSERTE((psz - pszDst + 1 + iLineLen) <= nLenMax);
 
 				wmemmove(psz, lsLine.ms_Arg, iLineLen);
 				psz += iLineLen;
 			}
 
 			cbSize = (psz - pszDst + 1)*sizeof(wchar_t);
-			_ASSERTE(cbSize <= ((nLenMax+2)*sizeof(wchar_t)));
+			_ASSERTE(cbSize <= (nLenMax*sizeof(wchar_t)));
 			_ASSERTE(*(psz-1) == 0 && *psz);
 			*psz = 0; // MSZZ
 		}
@@ -5378,6 +5464,21 @@ DWORD Settings::GetHotkeyById(int nDescrID, const ConEmuHotKey** ppHK)
 	}
 
 	return 0;
+}
+
+// Return hotkeyname by ID
+LPCWSTR Settings::GetHotkeyNameById(int nDescrID, wchar_t (&szFull)[128], bool bShowNone /*= true*/)
+{
+	const ConEmuHotKey* pHK = NULL;
+	if (gpSet->GetHotkeyById(nDescrID, &pHK) && pHK)
+	{
+		pHK->GetHotkeyName(szFull, bShowNone);
+	}
+	else
+	{
+		wcscpy_c(szFull, bShowNone ? gsNoHotkey : L"");
+	}
+	return szFull;
 }
 
 // Проверить, задан ли этот hotkey

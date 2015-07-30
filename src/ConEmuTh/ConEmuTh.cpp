@@ -1,6 +1,6 @@
 ﻿
 /*
-Copyright (c) 2009-2012 Maximus5
+Copyright (c) 2009-2015 Maximus5
 All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
@@ -683,7 +683,7 @@ void ExitPlugin(void)
 		dwWait = WaitForSingleObject(ghDisplayThread, 1000);
 
 	if (dwWait)
-		TerminateThread(ghDisplayThread, 100);
+		apiTerminateThread(ghDisplayThread, 100);
 
 	if (ghDisplayThread)
 	{

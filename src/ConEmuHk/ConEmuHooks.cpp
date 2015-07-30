@@ -41,6 +41,12 @@ THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #endif
 
 #ifdef _DEBUG
+	#define BsDelWordMsg(s) //MessageBox(NULL, s, L"OnPromptBsDeleteWord called", MB_SYSTEMMODAL);
+#else
+	#define BsDelWordMsg(s) //MessageBox(NULL, s, L"OnPromptBsDeleteWord called", MB_SYSTEMMODAL);
+#endif
+
+#ifdef _DEBUG
 	//#define PRE_PEEK_CONSOLE_INPUT
 	#undef PRE_PEEK_CONSOLE_INPUT
 #else
@@ -95,9 +101,10 @@ THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "Ansi.h"
 #include "../common/CmdLine.h"
 #include "../common/ConsoleAnnotation.h"
-//#include "../common/clink.h"
+#include "../common/ConsoleRead.h"
 #include "../common/UnicodeChars.h"
 #include "../common/WConsole.h"
+#include "../common/WThreads.h"
 
 
 bool USE_INTERNAL_QUEUE = true;
@@ -372,6 +379,7 @@ HANDLE WINAPI OnOpenFileMappingW(DWORD dwDesiredAccess, BOOL bInheritHandle, LPC
 LPVOID WINAPI OnMapViewOfFile(HANDLE hFileMappingObject, DWORD dwDesiredAccess, DWORD dwFileOffsetHigh, DWORD dwFileOffsetLow, SIZE_T dwNumberOfBytesToMap);
 BOOL WINAPI OnUnmapViewOfFile(LPCVOID lpBaseAddress);
 BOOL WINAPI OnCloseHandle(HANDLE hObject);
+BOOL WINAPI OnGetModuleHandleExW(DWORD dwFlags, LPCWSTR lpModuleName, HMODULE *phModule);
 
 #ifdef _DEBUG
 HANDLE WINAPI OnCreateNamedPipeW(LPCWSTR lpName, DWORD dwOpenMode, DWORD dwPipeMode, DWORD nMaxInstances,DWORD nOutBufferSize, DWORD nInBufferSize, DWORD nDefaultTimeOut,LPSECURITY_ATTRIBUTES lpSecurityAttributes);
@@ -508,6 +516,8 @@ bool InitHooksCommon()
 		{(void*)OnReadConsoleInputA,	"ReadConsoleInputA",	kernel32},
 		{(void*)OnWriteConsoleInputA,	"WriteConsoleInputA",	kernel32},
 		{(void*)OnWriteConsoleInputW,	"WriteConsoleInputW",	kernel32},
+		// Issue 1899: Support GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS flag because of CreateFileW
+		{(void*)OnGetModuleHandleExW,	"GetModuleHandleExW",	kernel32},
 		/* ANSI Escape Sequences SUPPORT */
 		//#ifdef HOOK_ANSI_SEQUENCES
 		{(void*)CEAnsi::OnCreateFileW,	"CreateFileW",  		kernel32},
@@ -1570,6 +1580,31 @@ BOOL WINAPI OnCloseHandle(HANDLE hObject)
 	if (ghSkipSetThreadContextForThread == hObject)
 		ghSkipSetThreadContextForThread = NULL;
 
+	return lbRc;
+}
+
+BOOL WINAPI OnGetModuleHandleExW(DWORD dwFlags, LPCWSTR lpModuleName, HMODULE *phModule)
+{
+	typedef BOOL (WINAPI* OnGetModuleHandleExW_t)(DWORD dwFlags, LPCWSTR lpModuleName, HMODULE *phModule);
+	ORIGINALFAST(GetModuleHandleExW);
+	BOOL lbRc = FALSE;
+	LPCWSTR lpModuleName2 = lpModuleName;
+
+	// Issue 1899: Java uses following code
+	//		GetModuleHandleExW((GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT),
+	//			(LPCWSTR)&CreateFileW, &h)
+	// which caused NULL result because CreateFileW was hooked
+	if ((dwFlags & GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS) != 0)
+	{
+		HookItem* ph = NULL;
+		void* ptrOldProc = GetOriginalAddress((FARPROC)lpModuleName, NULL, FALSE, &ph);
+		if (ptrOldProc)
+		{
+			lpModuleName2 = (LPCWSTR)ptrOldProc;
+		}
+	}
+
+	lbRc = F(GetModuleHandleExW)(dwFlags, lpModuleName2, phModule);
 	return lbRc;
 }
 
@@ -3419,7 +3454,7 @@ BOOL WINAPI OnSetConsoleCP(UINT wCodePageID)
 	DWORD nPrevCP = GetConsoleCP();
 	#endif
 	DWORD nCurCP = 0;
-	HANDLE hThread = CreateThread(NULL,0,SetConsoleCPThread,&sco,0,&nTID);
+	HANDLE hThread = apiCreateThread(SetConsoleCPThread, &sco, &nTID, "OnSetConsoleCP(%u)", wCodePageID);
 
 	if (!hThread)
 	{
@@ -3446,7 +3481,7 @@ BOOL WINAPI OnSetConsoleCP(UINT wCodePageID)
 		else
 		{
 			//BUGBUG: На некоторых системых (Win2k3, WinXP) SetConsoleCP (и иже с ними) просто зависают
-			TerminateThread(hThread,100);
+			apiTerminateThread(hThread,100);
 			nCurCP = GetConsoleCP();
 			if (nCurCP == wCodePageID)
 			{
@@ -3468,7 +3503,7 @@ BOOL WINAPI OnSetConsoleCP(UINT wCodePageID)
 
 			//nWait = WaitForSingleObject(hThread, 0);
 			//if (nWait == WAIT_TIMEOUT)
-			//	TerminateThread(hThread,100);
+			//	apiTerminateThread(hThread,100);
 			//if (GetConsoleCP() == wCodePageID)
 			//	lbRc = TRUE;
 		}
@@ -3496,7 +3531,7 @@ BOOL WINAPI OnSetConsoleOutputCP(UINT wCodePageID)
 	DWORD nPrevCP = GetConsoleOutputCP();
 	#endif
 	DWORD nCurCP = 0;
-	HANDLE hThread = CreateThread(NULL,0,SetConsoleCPThread,&sco,0,&nTID);
+	HANDLE hThread = apiCreateThread(SetConsoleCPThread, &sco, &nTID, "OnSetConsoleOutputCP(%u)", wCodePageID);
 
 	if (!hThread)
 	{
@@ -3523,7 +3558,7 @@ BOOL WINAPI OnSetConsoleOutputCP(UINT wCodePageID)
 		else
 		{
 			//BUGBUG: На некоторых системых (Win2k3, WinXP) SetConsoleCP (и иже с ними) просто зависают
-			TerminateThread(hThread,100);
+			apiTerminateThread(hThread,100);
 			nCurCP = GetConsoleOutputCP();
 			if (nCurCP == wCodePageID)
 			{
@@ -3544,7 +3579,7 @@ BOOL WINAPI OnSetConsoleOutputCP(UINT wCodePageID)
 			}
 			//nWait = WaitForSingleObject(hThread, 0);
 			//if (nWait == WAIT_TIMEOUT)
-			//	TerminateThread(hThread,100);
+			//	apiTerminateThread(hThread,100);
 			//if (GetConsoleOutputCP() == wCodePageID)
 			//	lbRc = TRUE;
 		}
@@ -3671,7 +3706,10 @@ BOOL OnPromptBsDeleteWord(bool bForce, bool bBashMargin)
 {
 	HANDLE hConIn = NULL;
 	if (!IsPromptActionAllowed(bForce, bBashMargin, &hConIn))
+	{
+		BsDelWordMsg(L"Skipped due to !IsPromptActionAllowed!");
 		return FALSE;
+	}
 
 	int iBSCount = 0;
 	BOOL lbWrite = FALSE;
@@ -3703,6 +3741,12 @@ BOOL OnPromptBsDeleteWord(bool bForce, bool bBashMargin)
 				}
 			}
 
+			#ifdef _DEBUG
+			wchar_t szDbg[120];
+			_wsprintf(szDbg, SKIPCOUNT(szDbg) L"CP=%u bDBCS=%u IsDbcs=%u X=%i", nCP, bDBCS, IsDbcs(), csbi.dwCursorPosition.X);
+			BsDelWordMsg(szDbg);
+			#endif
+
 			int xPos = csbi.dwCursorPosition.X;
 			COORD cr = {0, csbi.dwCursorPosition.Y};
 			if ((xPos == 0) && (csbi.dwCursorPosition.Y > 0))
@@ -3710,42 +3754,35 @@ BOOL OnPromptBsDeleteWord(bool bForce, bool bBashMargin)
 				cr.Y--;
 				xPos = csbi.dwSize.X;
 			}
+			COORD cursorFix = {xPos, cr.Y};
 
-			char* pszLine = (char*)malloc(csbi.dwSize.X+1);
 			wchar_t* pwszLine = (wchar_t*)malloc((csbi.dwSize.X+1)*sizeof(*pwszLine));
 
 
-			if (pszLine && pwszLine)
+			if (pwszLine)
 			{
-				pszLine[csbi.dwSize.X] = 0;
 				pwszLine[csbi.dwSize.X] = 0;
 
 				// Считать строку
 				if (bDBCS)
 				{
-					// На DBCS кодировках "ReadConsoleOutputCharacterW" фигню возвращает
-					BOOL bReadOk = ReadConsoleOutputCharacterA(hConOut, pszLine, csbi.dwSize.X, cr, &nRead);
+					CHAR_INFO *pData = (CHAR_INFO*)calloc(csbi.dwSize.X, sizeof(CHAR_INFO));
+					COORD bufSize = {csbi.dwSize.X, 1};
+					SMALL_RECT rgn = {0, cr.Y, csbi.dwSize.X-1, cr.Y};
+
+					bReadOk = ReadConsoleOutputEx(hConOut, pData, bufSize, rgn, &cursorFix);
 					dwLastError = GetLastError();
+					_ASSERTE(bReadOk);
 
-					if (!bReadOk || !nRead)
+					if (bReadOk)
 					{
-						// Однако и ReadConsoleOutputCharacterA может глючить, пробуем "W"
-						bReadOk = ReadConsoleOutputCharacterW(hConOut, pwszLine, csbi.dwSize.X, cr, &nRead);
-						dwLastError = GetLastError();
-
-						if (!bReadOk || !nRead)
-							bReadOk = FALSE;
-						else
-							bDBCS = false; // Thread string as simple Unicode.
-					}
-					else
-					{
-						nRead = MultiByteToWideChar(nCP, 0, pszLine, nRead, pwszLine, csbi.dwSize.X);
+						for (int i = 0; i < csbi.dwSize.X; i++)
+							pwszLine[i] = pData[i].Char.UnicodeChar;
+						nRead = csbi.dwSize.X;
+						xPos = cursorFix.X;
 					}
 
-					// Check chars count
-					if (((int)nRead) <= 0)
-						bReadOk = FALSE;
+					SafeFree(pData);
 				}
 				else
 				{
@@ -3757,12 +3794,6 @@ BOOL OnPromptBsDeleteWord(bool bForce, bool bBashMargin)
 				if (bReadOk)
 				{
 					// Count chars
-					if (bDBCS)
-					{
-						TODO("DBCS!!! Must to convert cursor pos ('DBCS') to char pos!");
-						_ASSERTEX(bDBCS==false && "TODO!!!");
-					}
-					else
 					{
 						if ((int)nRead >= xPos)
 						{
@@ -3790,9 +3821,12 @@ BOOL OnPromptBsDeleteWord(bool bForce, bool bBashMargin)
 			}
 
 			// Done, string was processed
-			SafeFree(pszLine);
 			SafeFree(pwszLine);
 		}
+	}
+	else
+	{
+		BsDelWordMsg(L"GetConsoleScreenBufferInfo failed");
 	}
 
 	if (iBSCount > 0)
@@ -3832,6 +3866,10 @@ BOOL OnPromptBsDeleteWord(bool bForce, bool bBashMargin)
 
 			free(pr);
 		}
+	}
+	else
+	{
+		BsDelWordMsg(L"Nothing to delete");
 	}
 
 	UNREFERENCED_PARAMETER(dwLastError);

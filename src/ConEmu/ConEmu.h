@@ -117,6 +117,7 @@ typedef HIMC (WINAPI* ImmGetContext_t)(HWND hWnd);
 //};
 
 typedef LRESULT (*CallMainThreadFn)(LPARAM lParam);
+struct CallMainThreadArg;
 
 
 typedef DWORD ConEmuInstallMode;
@@ -258,7 +259,6 @@ class CConEmuMain
 		bool  WindowStartTsa;       // ключики "/StartTSA" или "/MinTSA"
 		bool  WindowStartNoClose;   // ключик "/MinTSA"
 		bool  ForceMinimizeToTray;  // ключики "/tsa" или "/tray"
-		bool  DisableAutoUpdate;    // ключик "/noupdate"
 		bool  DisableKeybHooks;     // ключик "/nokeyhook"
 		bool  DisableAllMacro;      // ключик "/nomacro"
 		bool  DisableAllHotkeys;    // ключик "/nohotkey"
@@ -267,6 +267,8 @@ class CConEmuMain
 		bool  DisableCloseConfirm;  // ключик "/nocloseconfirm"
 
 		BOOL  mb_ExternalHidden;
+
+		SYSTEMTIME mst_LastConsole32StartTime, mst_LastConsole64StartTime;
 
 		enum StartupStage {
 			ss_Starting,
@@ -429,7 +431,7 @@ class CConEmuMain
 			DWORD nReadyToSel;
 		} m_Pressed;
 	public:
-		void OnTabbarActivated(bool bTabbarVisible);
+		void OnTabbarActivated(bool bTabbarVisible, bool bInAutoShowHide);
 	protected:
 		BOOL mb_MouseCaptured;
 		void CheckActiveLayoutName();
@@ -594,6 +596,7 @@ class CConEmuMain
 		void ForceSelectionModifierPressed(DWORD nValue);
 		enum DragPanelBorder CheckPanelDrag(COORD crCon);
 		bool ConActivate(int nCon);
+		bool ConActivateByName(LPCWSTR asName);
 		bool ConActivateNext(BOOL abNext);
 		bool CreateWnd(RConStartArgs *args);
 		CVirtualConsole* CreateCon(RConStartArgs *args, bool abAllowScripts = false, bool abForceCurConsole = false);

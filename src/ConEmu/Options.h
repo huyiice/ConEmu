@@ -170,6 +170,8 @@ struct Settings
 		const AppSettings* GetAppSettings(int anAppId=-1);
 		const COLORREF* GetDefColors(LPCWSTR asDefName = NULL);
 		COLORREF* GetColors(int anAppId=-1, BOOL abFade = FALSE);
+		COLORREF* GetColorsPrepare(COLORREF *pColors, COLORREF *pColorsFade, bool* pbFadeInitialized, BOOL abFade);
+		void PrepareFadeColors(COLORREF *pColors, COLORREF *pColorsFade, bool* pbFadeInitialized);
 		COLORREF* GetPaletteColors(LPCWSTR asPalette, BOOL abFade = FALSE);
 		COLORREF GetFadeColor(COLORREF cr);
 		void ResetFadeColors();
@@ -183,8 +185,10 @@ struct Settings
 		const ColorPalette* PaletteGet(int anIndex); // 0-based, index of Palettes, or -1 for "<Current color scheme>"
 		const ColorPalette* PaletteGetByName(LPCWSTR asName);
 		const ColorPalette* PaletteFindCurrent(bool bMatchAttributes);
+		const ColorPalette* PaletteFindByColors(bool bMatchAttributes, const ColorPalette* pCur);
 		int PaletteGetIndex(LPCWSTR asName);
 		void PaletteSaveAs(LPCWSTR asName); // Save active colors to named palette
+		void PaletteSaveAs(LPCWSTR asName, bool abExtendColors, BYTE anExtendColorIdx, BYTE anTextColorIdx, BYTE anBackColorIdx, BYTE anPopTextColorIdx, BYTE anPopBackColorIdx, const COLORREF (&aColors)[0x20], bool abSaveSettings);
 		void PaletteDelete(LPCWSTR asName); // Delete named palette
 		void PaletteSetStdIndexes();
 		int PaletteSetActive(LPCWSTR asName);
@@ -229,8 +233,6 @@ struct Settings
 		void SavePalettes(SettingsBase* reg);
 		void SortPalettes();
 		void FreePalettes();
-
-		COLORREF* GetColorsPrepare(COLORREF *pColors, COLORREF *pColorsFade, bool* pbFadeInitialized, BOOL abFade);
 
 		int ProgressesCount;
 		ConEmuProgressStore** Progresses;
@@ -675,7 +677,7 @@ struct Settings
 		bool mb_StatusSettingsWasChanged;
 
 		//reg->Load(L"Tabs", isTabs);
-		char isTabs;
+		char isTabs; // 0 - don't show, 1 - always show, 2 - auto show
 		//reg->Load(L"TabsLocation", nTabsLocation);
 		BYTE nTabsLocation; // 0 - top, 1 - bottom
 		//reg->Load(L"TabIcons", isTabIcons);
@@ -883,6 +885,8 @@ struct Settings
 
 		// Вернуть заданный VkMod, или 0 если не задан. nDescrID = vkXXX (e.g. vkMinimizeRestore)
 		DWORD GetHotkeyById(int nDescrID, const ConEmuHotKey** ppHK = NULL);
+		// Return hotkeyname by ID
+		LPCWSTR GetHotkeyNameById(int nDescrID, wchar_t (&szFull)[128], bool bShowNone = true);
 		// Проверить, задан ли этот hotkey. nDescrID = vkXXX (e.g. vkMinimizeRestore)
 		bool IsHotkey(int nDescrID);
 		// Установить новый hotkey. nDescrID = vkXXX (e.g. vkMinimizeRestore).
@@ -1005,20 +1009,6 @@ struct Settings
 
 		/* *** AutoUpdate *** */
 		ConEmuUpdateSettings UpdSet;
-		//wchar_t *szUpdateVerLocation; // ConEmu latest version location info
-		//bool isUpdateCheckOnStartup;
-		//bool isUpdateCheckHourly;
-		//bool isUpdateConfirmDownload;
-		//BYTE isUpdateUseBuilds; // 1-stable only, 2-latest, 3-preview
-		//bool isUpdateUseProxy;
-		//wchar_t *szUpdateProxy; // "Server:port"
-		//wchar_t *szUpdateProxyUser;
-		//wchar_t *szUpdateProxyPassword;
-		//BYTE isUpdateDownloadSetup; // 1-Installer (ConEmuSetup.exe), 2-7z archieve (ConEmu.7z), WinRar or 7z required
-		//wchar_t *szUpdateArcCmdLine; // "%1"-archive file, "%2"-ConEmu base dir
-		//wchar_t *szUpdateDownloadPath; // "%TEMP%"
-		//bool isUpdateLeavePackages;
-		//wchar_t *szUpdatePostUpdateCmd; // Юзер может чего-то свое делать с распакованными файлами
 
 		/* *** Notification *** */
 		wchar_t StopBuzzingDate[16];
@@ -1061,6 +1051,7 @@ struct Settings
 		void ResetSavedOnExit();
 
 		SettingsBase* CreateSettings(const SettingsStorage* apStorage);
+		wchar_t* GetStoragePlaceDescr(const SettingsStorage* apStorage, LPCWSTR asPrefix);
 
 		void GetSettingsType(SettingsStorage& Storage, bool& ReadOnly);
 };

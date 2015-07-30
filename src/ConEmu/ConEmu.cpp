@@ -119,7 +119,7 @@ THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #define DEBUGSTRFOCUS(s) //DEBUGSTR(s)
 #define DEBUGSTRSESS(s) DEBUGSTR(s)
 #define DEBUGSTRDPI(s) DEBUGSTR(s)
-#define DEBUGSTRNOLOG(s) //DEBUGSTR(s)
+#define DEBUGSTRNOLOG(s) DEBUGSTR(s)
 #define DEBUGSTRDESTROY(s) DEBUGSTR(s)
 #ifdef _DEBUG
 //#define DEBUGSHOWFOCUS(s) DEBUGSTR(s)
@@ -354,7 +354,6 @@ CConEmuMain::CConEmuMain()
 	mb_InCreateWindow = true;
 	mb_LastTransparentFocused = false;
 
-	DisableAutoUpdate = false;
 	DisableKeybHooks = false;
 	DisableAllMacro = false;
 	DisableAllHotkeys = false;
@@ -364,6 +363,7 @@ CConEmuMain::CConEmuMain()
 	//mn_SysMenuOpenTick = mn_SysMenuCloseTick = 0;
 	//mb_PassSysCommand = false;
 	mb_ExternalHidden = FALSE;
+	ZeroStruct(mst_LastConsole32StartTime); ZeroStruct(mst_LastConsole64StartTime);
 	//mb_SkipSyncSize = false;
 	isPiewUpdate = false; //true; --Maximus5
 	hPictureView = NULL;  mrc_WndPosOnPicView = MakeRect(0,0);
@@ -1231,8 +1231,8 @@ LPWSTR CConEmuMain::ConEmuXml(bool* pbSpecialPath /*= NULL*/)
 		// Since Git-For-Windows 2.x
 		// * ConEmu.exe is supposed to be in /opt/bin/
 		// * ConEmu.xml in /share/conemu/
-		pszSearchXml.push_back(ExpandEnvStr(L"%ConEmuDir%\\..\\..\\share\\conemu\\ConEmu.xml"));
-		pszSearchXml.push_back(ExpandEnvStr(L"%ConEmuDir%\\..\\..\\share\\conemu\\.ConEmu.xml"));
+		pszSearchXml.push_back(ExpandEnvStr(L"%ConEmuDir%\\..\\share\\conemu\\ConEmu.xml"));
+		pszSearchXml.push_back(ExpandEnvStr(L"%ConEmuDir%\\..\\share\\conemu\\.ConEmu.xml"));
 	}
 	pszSearchXml.push_back(ExpandEnvStr(L"%ConEmuDir%\\ConEmu.xml"));
 	pszSearchXml.push_back(ExpandEnvStr(L"%ConEmuDir%\\.ConEmu.xml"));
@@ -1869,7 +1869,7 @@ BOOL CConEmuMain::CreateMainWindow()
 			gpSet->isQuakeStyle ? L" Quake" : L"",
 			this->mp_Inside ? L" Inside" : L"",
 			gpSet->isDesktopMode ? L" Desktop" : L"",
-			(DWORD)hParent,
+			LODWORD(hParent),
 			this->wndX, this->wndY, nWidth, nHeight, style, styleEx,
 			GetWindowModeName(gpSet->isQuakeStyle ? (ConEmuWindowMode)gpSet->_WindowMode : WindowMode));
 		LogString(szCreate);
@@ -2781,7 +2781,7 @@ void CConEmuMain::AskChangeBufferHeight()
 		if (dwFarPID)
 		{
 			// Это событие дергается в отладочной (мной поправленной) версии фара
-			wchar_t szEvtName[64]; _wsprintf(szEvtName, SKIPLEN(countof(szEvtName)) L"FARconEXEC:%08X", (DWORD)pRCon->ConWnd());
+			wchar_t szEvtName[64]; _wsprintf(szEvtName, SKIPLEN(countof(szEvtName)) L"FARconEXEC:%08X", LODWORD(pRCon->ConWnd()));
 			hFarInExecuteEvent = OpenEvent(EVENT_ALL_ACCESS, FALSE, szEvtName);
 
 			if (hFarInExecuteEvent)  // Иначе ConEmuC вызовет _ASSERTE в отладочном режиме
@@ -2844,9 +2844,53 @@ void CConEmuMain::SyncNtvdm()
 // Если табов не было, создается новая консоль, появляются табы
 // Размер окна ConEmu пытаемся НЕ менять, но размер КОНСОЛИ меняется
 // Нужно ее запомнить, иначе при Minimize/Restore установится некорректная высота!
-void CConEmuMain::OnTabbarActivated(bool bTabbarVisible)
+void CConEmuMain::OnTabbarActivated(bool bTabbarVisible, bool bInAutoShowHide)
 {
-	CVConGroup::SyncConsoleToWindow();
+	if (bInAutoShowHide/*(gpSet->isTabs == 2)*/ && IsSizeFree(GetWindowMode()))
+	{
+		if (!isIconic())
+		{
+			// Try to set new window size accomodating (dis)appearing tab bar height
+			RECT rcCur = CalcRect(CER_MAIN, NULL);
+			MONITORINFO mi = {};
+			GetNearestMonitorInfo(&mi, NULL, &rcCur);
+			RECT rcCon = CalcRect(CER_CONSOLE_ALL, rcCur, CER_MAIN, NULL, bTabbarVisible ? CEM_TABDEACTIVATE : CEM_TABACTIVATE);
+			RECT rcWnd = CalcRect(CER_MAIN, rcCon, CER_CONSOLE_ALL, NULL, bTabbarVisible ? CEM_TABACTIVATE : CEM_TABDEACTIVATE);
+			int iNewWidth = rcWnd.right-rcWnd.left, iNewHeight = rcWnd.bottom-rcWnd.top;
+			if ((iNewWidth != (rcCur.right - rcCur.left)) || (iNewHeight != (rcCur.bottom - rcCur.top)))
+			{
+				_ASSERTE(iNewWidth == (rcCur.right - rcCur.left)); // Width change is not expected
+
+				// If the window become LARGER than possible (going out of working area)
+				// we must decrease console height unfortunately...
+				if (bTabbarVisible && ((iNewHeight + rcCur.top) > mi.rcWork.bottom))
+				{
+					int iAllowedShift = (rcCur.bottom > mi.rcWork.bottom) ? (rcCur.bottom - mi.rcWork.bottom) : 0;
+					RECT rcWnd3 = {rcCur.left, rcCur.top, rcCur.right, (mi.rcWork.bottom + iAllowedShift)};
+					// Than we shall correct the integral size
+					RECT rcCon2 = CalcRect(CER_CONSOLE_ALL, rcWnd3, CER_MAIN, NULL, bTabbarVisible ? CEM_TABACTIVATE : CEM_TABDEACTIVATE);
+					RECT rcWnd2 = CalcRect(CER_MAIN, rcCon2, CER_CONSOLE_ALL, NULL, bTabbarVisible ? CEM_TABACTIVATE : CEM_TABDEACTIVATE);
+					// Final fix
+					iNewHeight = (rcWnd2.bottom-rcWnd2.top);
+					// Have to update normal rect
+					rcWnd3.bottom = rcWnd3.top + iNewHeight;
+					StoreNormalRect(&rcWnd3);
+				}
+
+				MSetter lSet(&mn_IgnoreSizeChange);
+				SetWindowPos(ghWnd, NULL,
+					0, 0, iNewWidth, iNewHeight,
+					SWP_NOZORDER|SWP_NOMOVE);
+			}
+		}
+	}
+	else
+	{
+		// Fullscreen or Inside, for example, we can't change window height, so
+		// do console resize to match new (lesser or larger) client area size
+		CVConGroup::SyncConsoleToWindow();
+	}
+
 	StoreNormalRect(NULL);
 }
 
@@ -3107,6 +3151,12 @@ bool CConEmuMain::ConActivateNext(BOOL abNext)
 bool CConEmuMain::ConActivate(int nCon)
 {
 	return CVConGroup::ConActivate(nCon);
+}
+
+// asName - renamed title, console title, active process name, root process name
+bool CConEmuMain::ConActivateByName(LPCWSTR asName)
+{
+	return CVConGroup::ConActivateByName(asName);
 }
 
 bool CConEmuMain::CreateWnd(RConStartArgs *args)
@@ -6042,6 +6092,9 @@ DWORD CConEmuMain::GetFarPID(BOOL abPluginRequired/*=FALSE*/)
 
 LPCTSTR CConEmuMain::GetLastTitle(bool abUseDefault/*=true*/)
 {
+	if (!this)
+		return L"ConEmu";
+
 	if (!Title[0] && abUseDefault)
 		return GetDefaultTitle();
 
@@ -7208,8 +7261,12 @@ void CConEmuMain::PostCreate(BOOL abReceived/*=FALSE*/)
 		}
 
 		//TODO: Возможно, стоит отложить запуск секунд на 5, чтобы не мешать инициализации?
-		if (gpSet->UpdSet.isUpdateCheckOnStartup && !DisableAutoUpdate)
+		if (!opt.DisableAutoUpdate
+			&& (gpSet->UpdSet.isUpdateCheckOnStartup || opt.AutoUpdateOnStart)
+			)
+		{
 			CheckUpdates(FALSE); // Не показывать сообщение "You are using latest available version"
+		}
 
 		//SetWindowRgn(ghWnd, CreateWindowRgn(), TRUE);
 
@@ -8006,7 +8063,7 @@ LRESULT CConEmuMain::OnFocus(HWND hWnd, UINT messg, WPARAM wParam, LPARAM lParam
 			{
 				HWND hFocus = GetFocus();
 				wchar_t szInfo[128];
-				_wsprintf(szInfo, SKIPLEN(countof(szInfo)) L"Focus event skipped, lbSetFocus=%u, mb_LastConEmuFocusState=%u, ghWnd=x%08X, hFore=x%08X, hFocus=x%08X", lbSetFocus, mb_LastConEmuFocusState, (DWORD)ghWnd, (DWORD)hNewFocus, (DWORD)hFocus);
+				_wsprintf(szInfo, SKIPLEN(countof(szInfo)) L"Focus event skipped, lbSetFocus=%u, mb_LastConEmuFocusState=%u, ghWnd=x%08X, hFore=x%08X, hFocus=x%08X", lbSetFocus, mb_LastConEmuFocusState, LODWORD(ghWnd), LODWORD(hNewFocus), LODWORD(hFocus));
 				LogFocusInfo(szInfo, 2);
 			}
 
@@ -8291,10 +8348,10 @@ void CConEmuMain::OnHideCaption()
 
 	if (nNewStyle != nStyle)
 	{
-		if (gpSetCls->isAdvLogging)
+		// Make debug output too
 		{
 			wchar_t szInfo[128];
-			_wsprintf(szInfo, SKIPLEN(countof(szInfo)) L"Changing main window 0x%08X style to 0x%08X", (DWORD)ghWnd, nNewStyle);
+			_wsprintf(szInfo, SKIPLEN(countof(szInfo)) L"Changing main window 0x%08X style Cur=x%08X New=x%08X ExStyle=x%08X", LODWORD(ghWnd), nStyle, nNewStyle, nStyleEx);
 			LogString(szInfo);
 		}
 
@@ -9508,7 +9565,7 @@ void CConEmuMain::CheckActiveLayoutName()
 	#ifdef TEST_JP_LANS
 	wcscpy_c(szLayout, L"00000411");
 	hkl = (HKL)0x04110411;
-	nCount = 3; hKeyb[0] = (HKL)0x04110411; hKeyb[0] = (HKL)0xE0200411; hKeyb[0] = (HKL)0x04090409;
+	nCount = 3; hKeyb[0] = (HKL)(DWORD_PTR)0x04110411; hKeyb[0] = (HKL)(DWORD_PTR)0xE0200411; hKeyb[0] = (HKL)(DWORD_PTR)0x04090409;
 	#endif
 
 	DWORD dwLayout = wcstoul(szLayout, &pszEnd, 16);
@@ -11641,7 +11698,7 @@ void CConEmuMain::CheckFocus(LPCWSTR asFrom)
 								if (!hAtPoint || !GetClassName(hAtPoint, szDbgClass, 63)) szDbgClass[0] = 0;
 
 								_wsprintf(szDbgInfo, SKIPCOUNT(szDbgInfo) L"Can't activate ConEmu on desktop. Opaque cell={%i,%i} screen={%i,%i}. WindowFromPoint=0x%08X (%s)\n",
-								          crOpaque.X, crOpaque.Y, pt.x, pt.y, (DWORD)hAtPoint, szDbgClass);
+								          crOpaque.X, crOpaque.Y, pt.x, pt.y, LODWORD(hAtPoint), szDbgClass);
 								DEBUGSTRFOREGROUND(szDbgInfo);
 								#endif
 							}
@@ -11672,7 +11729,7 @@ void CConEmuMain::CheckFocus(LPCWSTR asFrom)
 	else
 	{
 		#ifdef _DEBUG
-		_wsprintf(szDbg, SKIPLEN(countof(szDbg)) L"Foreground changed (%s). NewFore=0x%08X, ConEmu has focus, LBtn=%i\n", asFrom, (DWORD)hCurForeground, lbLDown);
+		_wsprintf(szDbg, SKIPLEN(countof(szDbg)) L"Foreground changed (%s). NewFore=0x%08X, ConEmu has focus, LBtn=%i\n", asFrom, LODWORD(hCurForeground), lbLDown);
 		#endif
 		mb_FocusOnDesktop = TRUE;
 	}
@@ -12796,7 +12853,7 @@ bool CConEmuMain::SetTransparent(HWND ahWnd, UINT anAlpha/*0..255*/, bool abColo
 				wchar_t szInfo[128];
 				DWORD nErr = bSet ? 0 : GetLastError();
 				_wsprintf(szInfo, SKIPLEN(countof(szInfo)) L"Transparency: Set(0x%08X, 0x%08X, %u, 0x%X) -> %u:%u",
-					(DWORD)ahWnd, acrColorKey, nTransparent, nNewFlags, bSet, nErr);
+					LODWORD(ahWnd), acrColorKey, nTransparent, nNewFlags, bSet, nErr);
 				LogString(szInfo);
 			}
 		}
@@ -12985,14 +13042,12 @@ void CConEmuMain::LogWindowPos(LPCWSTR asPrefix)
 		RECT rcWnd = {}; GetWindowRect(ghWnd, &rcWnd);
 		MONITORINFO mi;
 		HMONITOR hMon = GetNearestMonitor(&mi);
-		_wsprintf(szInfo, SKIPLEN(countof(szInfo)) L"%s: %s %s WindowMode=%u Rect={%i,%i}-{%i,%i} Mon(x%08X)=({%i,%i}-{%i,%i}),({%i,%i}-{%i,%i})",
+		_wsprintf(szInfo, SKIPLEN(countof(szInfo)) L"%s: %s %s WindowMode=%s Rect={%i,%i}-{%i,%i} Mon(x%08X)=({%i,%i}-{%i,%i}),({%i,%i}-{%i,%i})",
 			asPrefix ? asPrefix : L"WindowPos",
 			::IsWindowVisible(ghWnd) ? L"Visible" : L"Hidden",
 			::IsIconic(ghWnd) ? L"Iconic" : ::IsZoomed(ghWnd) ? L"Maximized" : L"Normal",
-			gpSet->isQuakeStyle ? gpSet->_WindowMode : WindowMode,
-			rcWnd.left, rcWnd.top, rcWnd.right, rcWnd.bottom,
-			(DWORD)hMon, mi.rcMonitor.left, mi.rcMonitor.top, mi.rcMonitor.right, mi.rcMonitor.bottom,
-			mi.rcWork.left, mi.rcWork.top, mi.rcWork.right, mi.rcWork.bottom);
+			GetWindowModeName((ConEmuWindowMode)(gpSet->isQuakeStyle ? gpSet->_WindowMode : WindowMode)),
+			LOGRECTCOORDS(rcWnd), LODWORD(hMon), LOGRECTCOORDS(mi.rcMonitor), LOGRECTCOORDS(mi.rcWork));
 		LogString(szInfo);
 	}
 }
@@ -13058,7 +13113,7 @@ void CConEmuMain::LogMessage(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 	size_t cchLen = strlen(szLog);
 	_wsprintfA(szLog+cchLen, SKIPLEN(countof(szLog)-cchLen)
 		": HWND=x%08X," WIN3264TEST(" W=x%08X, L=x%08X", " W=x%08X%08X, L=x%08X%08X"),
-		(DWORD)hWnd, WIN3264WSPRINT(wParam), WIN3264WSPRINT(lParam));
+		LODWORD(hWnd), WIN3264WSPRINT(wParam), WIN3264WSPRINT(lParam));
 
 	LogString(szLog);
 }
@@ -13231,15 +13286,49 @@ UINT CConEmuMain::GetRegisteredMessage(LPCSTR asLocal, LPCWSTR asGlobal)
 	return RegisterMessage(asLocal, asGlobal);
 }
 
+struct CallMainThreadArg
+{
+public:
+	DWORD  nMagic; // cnMagic
+	BOOL   bNeedFree;
+	LPARAM lParam;
+	DWORD  nSourceTID;
+	DWORD  nCallTick;
+	DWORD  nReceiveTick;
+public:
+	static const DWORD cnMagic = 0x7847CABF;
+public:
+	CallMainThreadArg(LPARAM alParam, BOOL abNeedFree)
+		: nMagic(cnMagic)
+		, bNeedFree(abNeedFree)
+		, lParam(alParam)
+		, nSourceTID(GetCurrentThreadId())
+		, nCallTick(GetTickCount())
+		, nReceiveTick(0)
+	{
+	};
+};
+
 LRESULT CConEmuMain::CallMainThread(bool bSync, CallMainThreadFn fn, LPARAM lParam)
 {
 	LRESULT lRc;
+	DWORD nCallTime = 0;
 	if (isMainThread() && bSync)
+	{
 		lRc = fn(lParam);
+	}
 	else if (!bSync)
-		lRc = PostMessage(ghWnd, mn_MsgCallMainThread, (WPARAM)fn, lParam);
+	{
+		CallMainThreadArg* pArg = new CallMainThreadArg(lParam, TRUE);
+		lRc = PostMessage(ghWnd, mn_MsgCallMainThread, (WPARAM)fn, (LPARAM)pArg);
+	}
 	else
-		lRc = SendMessage(ghWnd, mn_MsgCallMainThread, (WPARAM)fn, lParam);
+	{
+		CallMainThreadArg arg(lParam, FALSE);
+		lRc = SendMessage(ghWnd, mn_MsgCallMainThread, (WPARAM)fn, (LPARAM)&arg);
+		nCallTime = arg.nReceiveTick - arg.nCallTick;
+	}
+	UNREFERENCED_PARAMETER(nCallTime);
 	return lRc;
 }
 
@@ -13445,13 +13534,13 @@ LRESULT CConEmuMain::WndProc(HWND hWnd, UINT messg, WPARAM wParam, LPARAM lParam
 		case WM_SIZING:
 		{
 			RECT* pRc = (RECT*)lParam;
-			wchar_t szDbg[128]; _wsprintf(szDbg, SKIPLEN(countof(szDbg)) L"WM_SIZING (Edge%i, {%i,%i}-{%i,%i})\n", (DWORD)wParam, pRc->left, pRc->top, pRc->right, pRc->bottom);
+			wchar_t szDbg[128]; _wsprintf(szDbg, SKIPLEN(countof(szDbg)) L"WM_SIZING (Edge%i, {%i,%i}-{%i,%i})\n", (DWORD)wParam, LOGRECTCOORDS(*pRc));
 
 			if (!isIconic())
 				result = this->OnSizing(wParam, lParam);
 
 			size_t cchLen = wcslen(szDbg);
-			_wsprintf(szDbg+cchLen, SKIPLEN(countof(szDbg)-cchLen) L" -> ({%i,%i}-{%i,%i})\n", pRc->left, pRc->top, pRc->right, pRc->bottom);
+			_wsprintf(szDbg+cchLen, SKIPLEN(countof(szDbg)-cchLen) L" -> ({%i,%i}-{%i,%i})\n", LOGRECTCOORDS(*pRc));
 			LogString(szDbg, true, false);
 			DEBUGSTRSIZE(szDbg);
 		} break;
@@ -13461,12 +13550,12 @@ LRESULT CConEmuMain::WndProc(HWND hWnd, UINT messg, WPARAM wParam, LPARAM lParam
 			RECT* pRc = (RECT*)lParam;
 			if (pRc)
 			{
-				wchar_t szDbg[128]; _wsprintf(szDbg, SKIPLEN(countof(szDbg)) L"WM_MOVING ({%i,%i}-{%i,%i})", pRc->left, pRc->top, pRc->right, pRc->bottom);
+				wchar_t szDbg[128]; _wsprintf(szDbg, SKIPLEN(countof(szDbg)) L"WM_MOVING ({%i,%i}-{%i,%i})", LOGRECTCOORDS(*pRc));
 
 				result = this->OnMoving(pRc, true);
 
 				size_t cchLen = wcslen(szDbg);
-				_wsprintf(szDbg+cchLen, SKIPLEN(countof(szDbg)-cchLen) L" -> ({%i,%i}-{%i,%i})\n", pRc->left, pRc->top, pRc->right, pRc->bottom);
+				_wsprintf(szDbg+cchLen, SKIPLEN(countof(szDbg)-cchLen) L" -> ({%i,%i}-{%i,%i})\n", LOGRECTCOORDS(*pRc));
 				LogString(szDbg, true, false);
 				DEBUGSTRSIZE(szDbg);
 			}
@@ -14058,8 +14147,24 @@ LRESULT CConEmuMain::WndProc(HWND hWnd, UINT messg, WPARAM wParam, LPARAM lParam
 			}
 			else if (messg == this->mn_MsgCallMainThread)
 			{
+				LRESULT lFnRc = -1;
 				CallMainThreadFn fn = (CallMainThreadFn)wParam;
-				return fn ? fn(lParam) : -1;
+				CallMainThreadArg* pArg = (CallMainThreadArg*)lParam;
+				if (pArg && (pArg->nMagic == CallMainThreadArg::cnMagic))
+				{
+					pArg->nReceiveTick = GetTickCount();
+
+					if (fn)
+					{
+						lFnRc = fn(pArg->lParam);
+					}
+
+					if (pArg->bNeedFree)
+					{
+						free(pArg);
+					}
+				}
+				return lFnRc;
 			}
 
 			//else if (messg == this->mn_MsgCmdStarted || messg == this->mn_MsgCmdStopped) {

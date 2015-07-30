@@ -19,6 +19,123 @@ http://conemu.github.io/en/Whats_New.html
 -------------------------------------------
 
 
+2015.7.28
+* Updater. Show user-friendly information download fails, add ‘Retry’ button in the error dialog.
+* Issue 1899: Java 7 has been crashed with java.lang.InternalError.
+  If Java.exe was executed from symlinked location, the exception
+  was occurred in some circumstances:
+  Exception in thread "main" java.lang.InternalError: Should not get here
+  at sun.nio.fs.WindowsNativeDispatcher.GetFinalPathNameByHandle(Native Method)
+
+
+2015.7.27
+* DefTerm. Support Lazarus' console applications debugging.
+  User must add `lazarus.exe|gdb.exe` to the hooked executable list.
+* Downloader. Switch `-debug` may be used to show console and print progress even if output is redirected.
+* Downloader. Improve logging of self-update activities.
+* Updater. Empty proxy server field is used for proxy-autoconfiguration.
+
+
+2015.7.22
+* gh#129: ‘Restore’ button didn't restore width if TaskBar was auto-hidden.
+* GuiMacro: Tab(11,"Name"): activates tab by name, title or process name
+* Describe some switches in the About dialog.
+* Some additional logging while resizing window.
+* Write to Log information about used storage location (xml-file/reg + config).
+* For debugging purposes SEH is disabled in this release.
+
+
+2015.7.16
+[!] Now user may use any external downloader tool if ConEmu's internal does not suite.
+[*] Implement new switch `-update` to force automatic update procedure.
+[*] Describe switch `-LoadRegistry` in ConEmu's About dialog.
+[*] Force Win7 TaskBar to use different taskbar buttons for different configs
+    selected by one of the following switches:
+    `-config <name>`, `-loadcfgfile <file>`, `-loadregistry`, `-basic`.
+[*] Allow to delete several tasks at once, just select them with Shift or Ctrl pressed.
+[*] Button ‘Add default tasks’ behavior was changed. Confirmation dialog suggests to
+    either to add absent tasks or add and recreate all default tasks.
+    Recreation will affect tasks' commands and parameters.
+[*] gh#213: Improve update error reporting, more logging.
+[*] Switch processor refactoring (code moved to CConEmuStart class).
+[*] Internal changes in threads creating/killing.
+[*] Some more logging for toolbar buttons and window resizing.
+
+
+2015.7.7
+[*] This build changes the download procedure used within automatic updates.
+    ConEmu.exe (GUI) do not call WinInet functions anymore, instead it calls
+    the downloader tool (ConEmuC.exe is an only option at the moment).
+    This will eliminate accidental crashes of GUI after resume from sleep.
+[*] The downloader itself has new options.
+    If user omit dst file name - try to get it from Url.
+    If "-" was specified as dst file name or output is redirected - just write contents to stdout.
+    New switch ‘-agent <name>’ was implemented.
+
+
+2015.7.5
+[*] Script "ConEmu/GitShowBranch.cmd" was improved.
+[*] Highlight & goto was broken at least for powershell scripts (c8c386a regression).
+    Only file name (path) was highlighted without following line number.
+[*] Highlight & goto detector was failed if mouse was before first backslash of the path.
+[*] gh#205: TabBar was not shown on startup in some monitor configurations (bacc66d regression).
+
+
+2015.7.1
+[*] Add optional ‘/Silent’ switch to suppress environment exporting messages.
+    ConEmuC [/SILENT] /EXPORT[=CON|GUI|ALL] [Var1 [Var2 [...]]]
+[*] gh#193: Fix wrong condition: ‘Warn if MacType hookers are loaded’.
+[*] Omit ConEmuC export variables message in GitShowBranch.cmd.
+[*] gh#174: Let paste to all ‘grouped input’ consoles at once.
+[*] Show actual hotkey instead of default Ctrl+BackSpace in Settings.
+[*] Vert/Horz text cursor was displayed in wrong position especially on DBCS systems.
+[*] Ctrl+BackSpace feature was not working on DBCS systems.
+[*] Redirect chocolatey downloads to github.
+[*] gh#204: ConEmu hung on startup in some cases while initializing default tasks.
+
+
+2015.6.29
+[*] Attach (Win+G) was not succeeded if ConEmu has different bitness.
+[*] Grab palette from Win+G attached consoles (Vista+) and create new
+    if matching one was not found. These palettes ‘#Attached:XX’ are not
+    saved automatically, but will be when user presses ‘Save settings’ button
+    in the settings dialog.
+[*] gh#193: Show hookers warning once per day.
+[*] Show real names for ‘Win+Number’ and ‘Win+Arrows’ on the Controls page.
+[*] Search for static text control in the Settings dialog was failed.
+[*] Issue 1977: Don't change RealConsole height on tabs auto-show/hide,
+    resize ConEmu window height instead.
+[*] Add some urls to ConEmu.nuspec (chocolatey).
+[*] When tabs are auto shown icon was not loaded for the first tab.
+[*] Environment variables export was improved (some internal fixes).
+
+
+2015.6.21
+[*] Use recommended launcher for Git-For-Windows bash (default tasks).
+[*] Try to create default task for GitSDK bash.
+[*] Let Settings\Environment page use one line for one command.
+
+    This will make concrete set commands with quotation marks.
+    Following two commands are equal.
+
+      set "PATH=C:\Program Files\ConEmu;%PATH%"
+      set PATH=C:\Program Files\ConEmu;%PATH%
+
+    But you still have to use quotations to keep trailing spaces
+
+      set "VarName=This is my value   "
+
+[*] Support empty lines and comments on the Settings\Environment page.
+    You may comment lines with '#', '//', '--' or 'REM '.
+[*] gh187: Highlight and goto did not work when filename not finished by :[space] or :[number].
+[*] Improve default task names unification and sorting.
+[*] The arrow char was inserted into Far Manager prompt after selecting text with Alt+Mouse.
+[*] Fix xml search path for Git-For-Windows package.
+    Correct one is /opt/share/conemu/ConEmu.xml while ConEmu.exe is placed
+    in /opt/bin folder.
+[*] Error code was not shown properly if DefTerm inject fails.
+
+
 2015.6.10
 [*] Simplify `set` usage in Settings\Environment.
 [*] gh#179: Fix broken environment inheritance (ca9e31a regression).

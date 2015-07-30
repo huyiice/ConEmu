@@ -3177,7 +3177,7 @@ void CVConGroup::OnUpdateProcessDisplay(HWND hInfo)
 
 	wchar_t temp[MAX_PATH];
 
-	for (size_t j = 0; j < countof(gp_VCon); j++)
+	for (int j = 0; j < countof(gp_VCon); j++)
 	{
 		if (gp_VCon[j] == NULL) continue;
 
@@ -3374,6 +3374,8 @@ bool CVConGroup::Activate(CVirtualConsole* apVCon)
 
 	bool lbRc = false;
 
+	// Как-то все запутанно, с вызовами ConActivate и разными функциями...
+
 	for (size_t i = 0; i < countof(gp_VCon); i++)
 	{
 		if (gp_VCon[i] == apVCon)
@@ -3551,20 +3553,37 @@ BOOL CVConGroup::AttachRequested(HWND ahConWnd, const CESERVER_REQ_STARTSTOP* pS
 	// Если не нашли - определим, можно ли добавить новую консоль?
 	if (!bFound)
 	{
-		RConStartArgs* pArgs = new RConStartArgs;
-		pArgs->Detached = crb_On;
-		pArgs->BackgroundTab = pStartStop->bRunInBackgroundTab ? crb_On : crb_Undefined;
-		pArgs->RunAsAdministrator = pStartStop->bUserIsAdmin ? crb_On : crb_Undefined;
+		struct createVCon {
+			RConStartArgs* pArgs;
+			const CESERVER_REQ_STARTSTOP* pStartStop;
+			CVConGuard VCon;
+
+			static LRESULT createVConProc(LPARAM lParam)
+			{
+				createVCon* p = (createVCon*)lParam;
+				p->VCon = gpConEmu->CreateCon(p->pArgs);
+				if (!p->VCon.VCon())
+					return 0;
+				if (p->pStartStop && p->pStartStop->bPalletteLoaded)
+					p->VCon->SetSelfPalette(p->pStartStop->wAttributes, p->pStartStop->wPopupAttributes, p->pStartStop->ColorTable);
+				return (LRESULT)p->VCon.VCon();
+			};
+		} impl = {new RConStartArgs(), pStartStop};
+
+		impl.pArgs->Detached = crb_On;
+		impl.pArgs->BackgroundTab = pStartStop->bRunInBackgroundTab ? crb_On : crb_Undefined;
+		impl.pArgs->RunAsAdministrator = pStartStop->bUserIsAdmin ? crb_On : crb_Undefined;
 		_ASSERTE(pStartStop->sCmdLine[0]!=0);
-		pArgs->pszSpecialCmd = lstrdup(pStartStop->sCmdLine);
+		impl.pArgs->pszSpecialCmd = lstrdup(pStartStop->sCmdLine);
 
 		if (gpConEmu->isIconic())
 		{
 			gpConEmu->DoMinimizeRestore(sih_SetForeground);
 		}
 
-		// т.к. это приходит из серверного потока - зовем в главном
-		VCon = (CVirtualConsole*)SendMessage(ghWnd, gpConEmu->mn_MsgCreateCon, gpConEmu->mn_MsgCreateCon, (LPARAM)pArgs);
+		// Execute this in MainThread
+		VCon = (CVirtualConsole*)gpConEmu->CallMainThread(true, createVCon::createVConProc, (LPARAM)&impl);
+
 		if (VCon.VCon() && !isValid(VCon.VCon()))
 		{
 			_ASSERTE(FALSE && "MsgCreateCon failed");
@@ -3709,6 +3728,102 @@ bool CVConGroup::GetVConByHWND(HWND hConWnd, HWND hDcWnd, CVConGuard* pVCon /*= 
 	} Impl = {hConWnd, hDcWnd, pVCon};
 	EnumVCon(evf_All, impl::FindCon, (LPARAM)&Impl);
 	return Impl.bFound;
+}
+
+// asName - renamed title, console title, active process name, root process name
+bool CVConGroup::GetVConByName(LPCWSTR asName, CVConGuard* rpVCon /*= NULL*/)
+{
+	if (!asName || !*asName)
+		return false;
+
+	struct impl
+	{
+		LPCWSTR pszName;
+		CVConGuard VCon;
+
+		enum {
+			m_Renamed = 0,
+			m_StdTitle,
+			m_ActiveExe,
+			m_RootExe,
+			m_Last
+		};
+		int  iMode;
+		bool bRenamed;
+
+		static bool FindVCon(CVirtualConsole* pVCon, LPARAM lParam)
+		{
+			impl* p = (impl*)lParam;
+			CRealConsole* pRCon = pVCon->RCon();
+			if (!pRCon)
+				return true; // Try next
+
+			// ‘Renamed’ flags match?
+			if (p->bRenamed != ((pRCon->GetActiveTabType() & fwt_Renamed) == fwt_Renamed))
+				return true; // Try next
+
+			LPCWSTR pszTitle;
+			switch (p->iMode)
+			{
+			case m_StdTitle:
+				pszTitle = pRCon->GetTitle(false);
+				break;
+			case m_ActiveExe:
+				pszTitle = pRCon->GetActiveProcessName();
+				break;
+			case m_RootExe:
+				pszTitle = pRCon->GetRootProcessName();
+				break;
+			default:
+				pszTitle = pRCon->GetTitle(true);
+			}
+
+			// Compare insensitively
+			if (pszTitle && (lstrcmpi(p->pszName, pszTitle)) == 0)
+			{
+				p->VCon.Attach(pVCon);
+				return false; // Found, stop iterations
+			}
+			return true;
+		};
+	} Impl = {asName};
+
+	// Try only renamed tabs first
+	Impl.iMode = impl::m_Renamed; Impl.bRenamed = true;
+	EnumVCon(evf_All, impl::FindVCon, (LPARAM)&Impl);
+
+	for (int step = 0; !Impl.VCon.VCon() && (step <= 1); step++)
+	{
+		// To be able activate "cmd.exe" tab which is NOT renamed,
+		// we shall find for non-renamed tabs first!
+		Impl.bRenamed = (step == 1);
+		for (Impl.iMode = impl::m_StdTitle; (Impl.iMode < impl::m_Last) && !Impl.VCon.VCon(); Impl.iMode++)
+		{
+			EnumVCon(evf_All, impl::FindVCon, (LPARAM)&Impl);
+		}
+	}
+
+	// Not found
+	if (!Impl.VCon.VCon())
+		return false;
+
+	// Found
+	if (rpVCon)
+		rpVCon->Attach(Impl.VCon.VCon());
+	return true;
+}
+
+// asName - renamed title, console title, active process name, root process name
+bool CVConGroup::ConActivateByName(LPCWSTR asName)
+{
+	CVConGuard VCon;
+	if (!GetVConByName(asName, &VCon))
+		return false;
+
+	if (VCon->isActive(false/*abAllowGroup*/))
+		return true; // Already active
+
+	return Activate(VCon.VCon());
 }
 
 // Вернуть общее количество процессов по всем консолям
@@ -3923,6 +4038,106 @@ void CVConGroup::StoreActiveVCon(CVirtualConsole* pVCon)
 	}
 }
 
+bool CVConGroup::ConActivate(CVConGuard& VCon, int nCon)
+{
+	CVirtualConsole* pVCon = VCon.VCon();
+
+	if (pVCon == NULL)
+	{
+		_ASSERTE(pVCon!=NULL && "VCon was not created");
+		return false;
+	}
+
+	if (pVCon->RCon() == NULL)
+	{
+		_ASSERTE(FALSE && "mp_RCon was not created");
+		return false;
+	}
+
+	if (pVCon == gp_VActive)
+	{
+		// Iterate tabs
+		int nTabCount;
+		CRealConsole *pRCon;
+
+		// By sequental pressing "Win+<Number>" - loop tabs of active console (Far Manager windows)
+		if (gpSet->isMultiIterate
+			    && ((pRCon = gp_VActive->RCon()) != NULL)
+			    && ((nTabCount = pRCon->GetTabCount())>1))
+		{
+			int nNextActive = pRCon->GetActiveTab()+1;
+
+			if (nNextActive >= nTabCount)
+				nNextActive = 0;
+
+			CTab tab(__FILE__,__LINE__);
+			if (pRCon->GetTab(nNextActive, tab))
+			{
+				int nFarWndId = tab->Info.nFarWindowID;
+				if (pRCon->CanActivateFarWindow(nFarWndId))
+					pRCon->ActivateFarWindow(nFarWndId);
+			}
+		}
+
+		return true; // Success
+	}
+
+	bool lbSizeOK = true;
+	int nOldConNum = ActiveConNum();
+
+	CVirtualConsole* pOldActive = gp_VActive;
+
+	// Hide PictureView and others...
+	if (gp_VActive && gp_VActive->RCon())
+	{
+		gp_VActive->RCon()->OnDeactivate(nCon);
+	}
+
+	// BEFORE switching into other console - update its dimensions
+	CRealConsole* pRCon = pVCon->RCon();
+	int nOldConWidth = pRCon->TextWidth();
+	int nOldConHeight = pRCon->TextHeight();
+	RECT rcNewCon = gpConEmu->CalcRect(CER_CONSOLE_CUR, pVCon);
+	int nNewConWidth = rcNewCon.right;
+	int nNewConHeight = rcNewCon.bottom;
+
+	wchar_t szInfo[128];
+	_wsprintf(szInfo, SKIPLEN(countof(szInfo)) L"Activating con #%u, OldSize={%u,%u}, NewSize={%u,%u}",
+		nCon, nOldConWidth, nOldConHeight, nNewConWidth, nNewConHeight);
+	if (gpSetCls->isAdvLogging)
+	{
+		pRCon->LogString(szInfo);
+	}
+	else
+	{
+		DEBUGSTRACTIVATE(szInfo);
+	}
+
+	if (!pRCon->isServerClosing()
+		&& (nOldConWidth != nNewConWidth || nOldConHeight != nNewConHeight))
+	{
+		DWORD nCmdID = CECMD_SETSIZESYNC;
+		if (!pRCon->isFar(true)) nCmdID = CECMD_SETSIZENOSYNC;
+		lbSizeOK = pRCon->SetConsoleSize(nNewConWidth, nNewConHeight, 0/*don't change buffer size*/, nCmdID);
+	}
+
+	// Currect sizes of VCon/Back
+	RECT rcWork = {};
+	rcWork = gpConEmu->CalcRect(CER_WORKSPACE, pVCon);
+	CVConGroup::MoveAllVCon(pVCon, rcWork);
+
+	setActiveVConAndFlags(pVCon);
+
+	pRCon->OnActivate(nCon, nOldConNum);
+
+	if (!lbSizeOK)
+		SyncWindowToConsole(); // -- dummy
+
+	ShowActiveGroup(pOldActive);
+
+	return true; // Success
+}
+
 // nCon - zero-based index of console
 bool CVConGroup::ConActivate(int nCon)
 {
@@ -3952,86 +4167,10 @@ bool CVConGroup::ConActivate(int nCon)
 			return false;
 		}
 
-		if (pVCon == gp_VActive)
-		{
-			// Итерация табов
-			int nTabCount;
-			CRealConsole *pRCon;
+		_ASSERTE(nCon == VCon->Index()); // Informational, but it must match
 
-			// При последовательном нажатии "Win+<Number>" - крутить табы активной консоли
-			if (gpSet->isMultiIterate
-			        && ((pRCon = gp_VActive->RCon()) != NULL)
-			        && ((nTabCount = pRCon->GetTabCount())>1))
-			{
-				int nNextActive = pRCon->GetActiveTab()+1;
-
-				if (nNextActive >= nTabCount)
-					nNextActive = 0;
-
-				CTab tab(__FILE__,__LINE__);
-				if (pRCon->GetTab(nNextActive, tab))
-				{
-					int nFarWndId = tab->Info.nFarWindowID;
-					if (pRCon->CanActivateFarWindow(nFarWndId))
-						pRCon->ActivateFarWindow(nFarWndId);
-				}
-			}
-
-			return true; // уже
-		}
-
-		bool lbSizeOK = true;
-		int nOldConNum = ActiveConNum();
-
-		CVirtualConsole* pOldActive = gp_VActive;
-
-		// Спрятать PictureView, или еще чего...
-		if (gp_VActive && gp_VActive->RCon())
-		{
-			gp_VActive->RCon()->OnDeactivate(nCon);
-		}
-
-		// ПЕРЕД переключением на новую консоль - обновить ее размеры
-		CRealConsole* pRCon = pVCon->RCon();
-		int nOldConWidth = pRCon->TextWidth();
-		int nOldConHeight = pRCon->TextHeight();
-		RECT rcNewCon = gpConEmu->CalcRect(CER_CONSOLE_CUR, pVCon);
-		int nNewConWidth = rcNewCon.right;
-		int nNewConHeight = rcNewCon.bottom;
-
-		wchar_t szInfo[128];
-		_wsprintf(szInfo, SKIPLEN(countof(szInfo)) L"Activating con #%u, OldSize={%u,%u}, NewSize={%u,%u}",
-			nCon, nOldConWidth, nOldConHeight, nNewConWidth, nNewConHeight);
-		if (gpSetCls->isAdvLogging)
-		{
-			pRCon->LogString(szInfo);
-		}
-		else
-		{
-			DEBUGSTRACTIVATE(szInfo);
-		}
-
-		if (!pRCon->isServerClosing()
-			&& (nOldConWidth != nNewConWidth || nOldConHeight != nNewConHeight))
-		{
-			DWORD nCmdID = CECMD_SETSIZESYNC;
-			if (!pRCon->isFar(true)) nCmdID = CECMD_SETSIZENOSYNC;
-			lbSizeOK = pRCon->SetConsoleSize(nNewConWidth, nNewConHeight, 0/*не менять*/, nCmdID);
-		}
-
-		// И поправить размеры VCon/Back
-		RECT rcWork = {};
-		rcWork = gpConEmu->CalcRect(CER_WORKSPACE, pVCon);
-		CVConGroup::MoveAllVCon(pVCon, rcWork);
-
-		setActiveVConAndFlags(pVCon);
-
-		pRCon->OnActivate(nCon, nOldConNum);
-
-		if (!lbSizeOK)
-			SyncWindowToConsole(); // -- функция пустая, игнорируется
-
-		ShowActiveGroup(pOldActive);
+		// Do the activation
+		return ConActivate(VCon, nCon);
 	}
 
 	return false;
@@ -4249,11 +4388,6 @@ CVirtualConsole* CVConGroup::CreateCon(RConStartArgs *args, bool abAllowScripts 
 					ShowActiveGroup(NULL);
 				}
 
-				// Если была смена конфигурации окна (появились табы)
-				if (!bTabbar && gpConEmu->mp_TabBar->IsTabsShown())
-				{
-					gpConEmu->OnTabbarActivated(true);
-				}
 			}
 
 			break;
@@ -5195,6 +5329,8 @@ void CVConGroup::PaintGaps(HDC hDC)
 		HBRUSH hBrush = CreateSolidBrush(gpSet->GetColors(-1, lbFade)[nColorIdx]);
 
 		FillRect(hDC, &rcClient, hBrush);
+
+		SafeDeleteObject(hBrush);
 	}
 	else
 	{

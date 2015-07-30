@@ -211,6 +211,10 @@ public:
 	static HRGN GetExclusionRgn(bool abTestOnly = false);
 	static void OnConActivated(CVirtualConsole* pVCon);
 	static bool ConActivate(int nCon);
+	private:
+	static bool ConActivate(CVConGuard& VCon, int nCon);
+	public:
+	static bool ConActivateByName(LPCWSTR asName);
 	static bool ConActivateNext(bool abNext);
 	static DWORD CheckProcesses();
 	static CRealConsole* AttachRequestedGui(DWORD anServerPID, LPCWSTR asAppFileName, DWORD anAppPID);
@@ -219,6 +223,7 @@ public:
 	static int ActiveConNum();
 	static bool GetVConBySrvPID(DWORD anServerPID, DWORD anMonitorTID, CVConGuard* pVCon = NULL);
 	static bool GetVConByHWND(HWND hConWnd, HWND hDcWnd, CVConGuard* pVCon = NULL);
+	static bool GetVConByName(LPCWSTR asName, CVConGuard* rpVCon = NULL);
 
 	static void LogString(LPCSTR asText, BOOL abShowTime = FALSE);
 	static void LogString(LPCWSTR asText, BOOL abShowTime = FALSE);

@@ -35,6 +35,7 @@ class CSetDlgButtons
 public:
 	static bool checkDlgButton(HWND hParent, WORD nCtrlId, UINT uCheck);
 	static bool checkRadioButton(HWND hParent, int nIDFirstButton, int nIDLastButton, int nIDCheckButton);
+	static void enableDlgItems(HWND hParent, UINT* pnCtrlID, INT_PTR nCount, bool bEnabled);
 	static BYTE IsChecked(HWND hParent, WORD nCtrlId);
 	static BYTE IsChecked(WORD nCtrlId, WORD CB, BYTE uCheck);
 
@@ -249,6 +250,8 @@ protected:
 	static void OnBtn_UpdateCheckHourly(HWND hDlg, WORD CB, BYTE uCheck);
 	static void OnBtn_UpdateConfirmDownload(HWND hDlg, WORD CB, BYTE uCheck);
 	static void OnBtn_UpdateTypeRadio(HWND hDlg, WORD CB, BYTE uCheck);
+	static void OnBtn_UpdateInetTool(HWND hDlg, WORD CB, BYTE uCheck);
+	static void OnBtn_UpdateInetToolCmd(HWND hDlg, WORD CB, BYTE uCheck);
 	static void OnBtn_UpdateUseProxy(HWND hDlg, WORD CB, BYTE uCheck);
 	static void OnBtn_UpdateLeavePackages(HWND hDlg, WORD CB, BYTE uCheck);
 	static void OnBtn_UpdateArcCmdLine(HWND hDlg, WORD CB, BYTE uCheck);

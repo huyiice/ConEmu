@@ -232,9 +232,8 @@ void CTabBarClass::Retrieve()
 
 int CTabBarClass::CreateTabIcon(LPCWSTR asIconDescr, bool bAdmin, LPCWSTR asWorkDir)
 {
-	if (!gpSet->isTabIcons)
-		return -1;
-	return m_TabIcons.CreateTabIcon(asIconDescr, bAdmin, asWorkDir);
+	int iIconIdx = gpSet->isTabIcons ? m_TabIcons.CreateTabIcon(asIconDescr, bAdmin, asWorkDir) : -1;
+	return iIconIdx;
 }
 
 HIMAGELIST CTabBarClass::GetTabIcons()
@@ -500,12 +499,8 @@ void CTabBarClass::Activate(BOOL abPreSyncConsole/*=FALSE*/)
 	CheckRebarCreated();
 
 	_active = true;
-	if (abPreSyncConsole && (gpConEmu->GetWindowMode() == wmNormal))
-	{
-		RECT rcIdeal = gpConEmu->GetIdealRect();
-		CVConGroup::SyncConsoleToWindow(&rcIdeal, TRUE);
-	}
-	gpConEmu->OnTabbarActivated(true);
+	bool bAutoShowHide = true;
+	gpConEmu->OnTabbarActivated(true, bAutoShowHide);
 	UpdatePosition();
 }
 
@@ -554,6 +549,20 @@ void CTabBarClass::CheckRebarCreated()
 	if (!m_TabIcons.IsInitialized())
 	{
 		m_TabIcons.Initialize();
+
+		// Refresh all RCon where icons were not loaded yet
+		struct impl
+		{
+			static bool RefreshIcons(CVirtualConsole* pVCon, LPARAM lParam)
+			{
+				if (pVCon->RCon()->GetRootProcessIcon() == -1)
+				{
+					pVCon->RCon()->NeedRefreshRootProcessIcon();
+				}
+				return true;
+			}
+		};
+		CVConGroup::EnumVCon(evf_All, impl::RefreshIcons, 0);
 	}
 
 	// Создать
@@ -572,12 +581,8 @@ void CTabBarClass::Deactivate(BOOL abPreSyncConsole/*=FALSE*/)
 		return;
 
 	_active = false;
-	if (abPreSyncConsole && !(gpConEmu->isZoomed() || gpConEmu->isFullScreen()))
-	{
-		RECT rcIdeal = gpConEmu->GetIdealRect();
-		CVConGroup::SyncConsoleToWindow(&rcIdeal, true);
-	}
-	gpConEmu->OnTabbarActivated(false);
+	bool bAutoShowHide = true;
+	gpConEmu->OnTabbarActivated(false, bAutoShowHide);
 	UpdatePosition();
 }
 
@@ -991,7 +996,7 @@ void CTabBarClass::Update(BOOL abPosted/*=FALSE*/)
 	return; // Just for clearness
 }
 
-RECT CTabBarClass::GetMargins()
+RECT CTabBarClass::GetMargins(bool bIgnoreVisibility /*= false*/)
 {
 	RECT rcNewMargins = {0,0};
 
@@ -1001,7 +1006,7 @@ RECT CTabBarClass::GetMargins()
 		return rcNewMargins;
 	}
 
-	if (_active || (gpSet->isTabs == 1))
+	if (bIgnoreVisibility || (_active || (gpSet->isTabs == 1)))
 	{
 		if (!_tabHeight)
 		{
@@ -1057,7 +1062,7 @@ void CTabBarClass::UpdatePosition()
 		if (!gpConEmu->InCreateWindow())
 		{
 			//gpConEmu->Sync ConsoleToWindow(); -- 2009.07.04 Sync должен быть выполнен в самом ReSize
-			gpConEmu->ReSize(TRUE);
+			gpConEmu->ReSize();
 		}
 	}
 	else
@@ -1065,7 +1070,7 @@ void CTabBarClass::UpdatePosition()
 		_visible = false;
 
 		//gpConEmu->Sync ConsoleToWindow(); -- 2009.07.04 Sync должен быть выполнен в самом ReSize
-		gpConEmu->ReSize(TRUE);
+		gpConEmu->ReSize();
 
 		// _active уже сбросили, поэтому реально спрятать можно и позже
 		mp_Rebar->ShowBar(false);
@@ -1079,6 +1084,7 @@ void CTabBarClass::Reposition()
 		return;
 	}
 
+	CheckRebarCreated();
 	mp_Rebar->RepositionInt();
 }
 
@@ -1241,17 +1247,25 @@ void CTabBarClass::OnCommand(WPARAM wParam, LPARAM lParam)
 	if (wParam == TID_ACTIVE_NUMBER)
 	{
 		//gpConEmu->ConActivate(wParam-1);
+		LogString(L"ToolBar: TID_ACTIVE_NUMBER");
 		OnChooseTabPopup();
 	}
 	else if (wParam == TID_CREATE_CON)
 	{
 		if (gpConEmu->IsGesturesEnabled())
+		{
+			LogString(L"ToolBar: TID_CREATE_CON/gesture");
 			gpConEmu->mp_Menu->OnNewConPopupMenu(NULL, 0, isPressed(VK_SHIFT));
+		}
 		else
+		{
+			LogString(L"ToolBar: TID_CREATE_CON/mouse");
 			gpConEmu->RecreateAction(gpSetCls->GetDefaultCreateAction(), gpSet->isMultiNewConfirm || isPressed(VK_SHIFT));
+		}
 	}
 	else if (wParam == TID_ALTERNATIVE)
 	{
+		LogString(L"ToolBar: TID_ALTERNATIVE");
 		CVConGuard VCon;
 		CVirtualConsole* pVCon = (gpConEmu->GetActiveVCon(&VCon) >= 0) ? VCon.VCon() : NULL;
 		// Вернуть на тулбар _текущее_ состояние режима
@@ -1261,6 +1275,7 @@ void CTabBarClass::OnCommand(WPARAM wParam, LPARAM lParam)
 	}
 	else if (wParam == TID_SCROLL)
 	{
+		LogString(L"ToolBar: TID_SCROLL");
 		CVConGuard VCon;
 		CVirtualConsole* pVCon = (gpConEmu->GetActiveVCon(&VCon) >= 0) ? VCon.VCon() : NULL;
 		// Вернуть на тулбар _текущее_ состояние режима
@@ -1270,10 +1285,12 @@ void CTabBarClass::OnCommand(WPARAM wParam, LPARAM lParam)
 	}
 	else if (wParam == TID_MINIMIZE)
 	{
+		LogString(L"ToolBar: TID_MINIMIZE");
 		PostMessage(ghWnd, WM_SYSCOMMAND, SC_MINIMIZE, 0);
 	}
 	else if (wParam == TID_MAXIMIZE)
 	{
+		LogString(L"ToolBar: TID_MAXIMIZE");
 		// Чтобы клик случайно не провалился в консоль
 		gpConEmu->mouse.state |= MOUSE_SIZING_DBLCKL;
 		// Аналог AltF9
@@ -1281,6 +1298,7 @@ void CTabBarClass::OnCommand(WPARAM wParam, LPARAM lParam)
 	}
 	else if (wParam == TID_APPCLOSE)
 	{
+		LogString(L"ToolBar: TID_APPCLOSE");
 		gpConEmu->PostScClose();
 	}
 	//else if (wParam == TID_COPYING)
@@ -1289,6 +1307,7 @@ void CTabBarClass::OnCommand(WPARAM wParam, LPARAM lParam)
 	//}
 	else if (wParam == TID_SYSMENU)
 	{
+		LogString(L"ToolBar: TID_SYSMENU");
 		RECT rcBtnRect = {0};
 		mp_Rebar->GetToolBtnRect(TID_SYSMENU, &rcBtnRect);
 		DWORD nAddFlags = ((gpSet->nTabsLocation == 1) ? TPM_BOTTOMALIGN : 0) | TPM_RIGHTALIGN;
@@ -1297,6 +1316,7 @@ void CTabBarClass::OnCommand(WPARAM wParam, LPARAM lParam)
 	}
 	else
 	{
+		LogString(L"ToolBar: click was not processed");
 		_ASSERTE(FALSE && "Toolbar click was not processed");
 	}
 }

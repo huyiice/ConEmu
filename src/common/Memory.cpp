@@ -174,6 +174,14 @@ void* __cdecl xf_realloc
 {
 	_ASSERTE(ghHeap);
 	_ASSERTE(_Size>0);
+	if (!_Memory)
+	{
+		return xf_malloc(_Size
+			#ifdef TRACK_MEMORY_ALLOCATIONS
+				, lpszFileName, nLine
+			#endif
+			);
+	}
 #ifdef TRACK_MEMORY_ALLOCATIONS
 	xf_mem_block* pOld = ((xf_mem_block*)_Memory)-1;
 
@@ -229,7 +237,11 @@ void __cdecl xf_free
 #endif
 )
 {
-	if (!ghHeap || !_Memory)
+	if (!_Memory)
+	{
+		return; // Nothing to do
+	}
+	if (!ghHeap)
 	{
 		//_ASSERTE(ghHeap && _Memory);
 		#ifdef _DEBUG
@@ -325,7 +337,7 @@ void __cdecl xf_dump()
 	{
 		if (pLast == ent.lpData)
 		{
-			msprintf(sBlockInfo, countof(sBlockInfo), "!!! HeapWalk cycled at 0x%08X, size=0x%08X\n", (DWORD)ent.lpData, ent.cbData);
+			msprintf(sBlockInfo, countof(sBlockInfo), "!!! HeapWalk cycled at 0x%08X, size=0x%08X\n", LODWORD(ent.lpData), ent.cbData);
 			OutputDebugStringA(sBlockInfo);
 			_ASSERTE(pLast != ent.lpData);
 			break;
@@ -333,7 +345,7 @@ void __cdecl xf_dump()
 
 		if (((int)ent.cbData) < 0)
 		{
-			msprintf(sBlockInfo, countof(sBlockInfo), "!!! Invalid memory block size at 0x%08X, size=0x%08X\n", (DWORD)ent.lpData, ent.cbData);
+			msprintf(sBlockInfo, countof(sBlockInfo), "!!! Invalid memory block size at 0x%08X, size=0x%08X\n", LODWORD(ent.lpData), ent.cbData);
 			OutputDebugStringA(sBlockInfo);
 			_ASSERTE(((int)ent.cbData) >= 0);
 			break;

@@ -2,12 +2,20 @@
 <package xmlns="http://schemas.microsoft.com/packaging/2011/08/nuspec.xsd">
   <metadata>
     <id>ConEmu</id>
-    <version>15.5.13.0</version>
+    <version>15.7.28.0</version>
     <authors>Maximus5</authors>
     <owners>Maximus5, Xavier Decoster, Ethan J. Brown</owners>
     <licenseUrl>http://opensource.org/licenses/BSD-3-Clause</licenseUrl>
     <projectUrl>http://conemu.github.io/</projectUrl>
     <iconUrl>http://conemu.github.io/img/logo.png</iconUrl>
+
+    <!-- new in choco 0.9.9.7 (begin) -->
+    <projectSourceUrl>http://github.com/Maximus5/ConEmu</projectSourceUrl>
+    <docsUrl>http://conemu.github.io/en/TableOfContents.html</docsUrl>
+    <mailingListUrl>http://groups.google.com/group/conemu_ml</mailingListUrl>
+    <bugTrackerUrl>http://conemu.github.io/en/Issues.html</bugTrackerUrl>
+    <!-- new in choco 0.9.9.7 (end) -->
+
     <requireLicenseAcceptance>false</requireLicenseAcceptance>
     <description>ConEmu-Maximus5 is a Windows console window enhancement (local terminal emulator), which presents multiple consoles and simple GUI applications as one customizable tabbed GUI window with various features:
 

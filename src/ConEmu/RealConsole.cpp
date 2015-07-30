@@ -33,6 +33,9 @@ THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #define SHOWDEBUGSTR
 //#define ALLOWUSEFARSYNCHRO
 
+// To catch gh#222
+#undef USE_SEH
+
 #include "Header.h"
 #include <Tlhelp32.h>
 #pragma warning(disable: 4091)
@@ -51,6 +54,7 @@ THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "../common/RgnDetect.h"
 #include "../common/SetEnvVar.h"
 #include "../common/WFiles.h"
+#include "../common/WThreads.h"
 #include "../common/WUser.h"
 #include "ConEmu.h"
 #include "ConEmuApp.h"
@@ -414,6 +418,8 @@ bool CRealConsole::Construct(CVirtualConsole* apVCon, RConStartArgs *args)
 	mb_WasStartDetached = (m_Args.Detached == crb_On);
 	_ASSERTE(mb_WasStartDetached == (args->Detached == crb_On));
 
+	ZeroStruct(mst_ServerStartingTime);
+
 	/* *** TABS *** */
 	// -- т.к. автопоказ табов может вызвать ресайз - то табы в самом конце инициализации!
 	_ASSERTE(isMainThread()); // Иначе табы сразу не перетряхнутся
@@ -598,8 +604,7 @@ bool CRealConsole::PreCreate(RConStartArgs *args)
 	}
 
 
-	BYTE nTextColorIdx /*= 7*/, nBackColorIdx /*= 0*/, nPopTextColorIdx /*= 5*/, nPopBackColorIdx /*= 15*/;
-	PrepareDefaultColors(nTextColorIdx, nBackColorIdx, nPopTextColorIdx, nPopBackColorIdx);
+	PrepareDefaultColors();
 
 	if (!ms_DefTitle.IsEmpty())
 	{
@@ -1667,6 +1672,13 @@ bool CRealConsole::PostPromptCmd(bool CD, LPCWSTR asCmd)
 	return lbRc;
 }
 
+void CRealConsole::OnKeysSending()
+{
+	if (!this || !mp_RBuf)
+		return;
+	mp_RBuf->OnKeysSending();
+}
+
 // !!! Функция может менять буфер pszChars! !!! Private !!!
 bool CRealConsole::PostString(wchar_t* pszChars, size_t cchCount)
 {
@@ -1683,7 +1695,22 @@ bool CRealConsole::PostString(wchar_t* pszChars, size_t cchCount)
 		return false;
 	}
 
-	mp_RBuf->OnKeysSending();
+	if (mp_VCon->isGroupedInput())
+	{
+		struct implKeys
+		{
+			static bool DoKeysSending(CVirtualConsole* pVCon, LPARAM lParam)
+			{
+				pVCon->RCon()->OnKeysSending();
+				return true;
+			}
+		};
+		CVConGroup::EnumVCon(evf_Visible, implKeys::DoKeysSending, 0);
+	}
+	else
+	{
+		OnKeysSending();
+	}
 
 	wchar_t szLog[80];
 	wchar_t* pszEnd = pszChars + cchCount;
@@ -1751,7 +1778,28 @@ bool CRealConsole::PostString(wchar_t* pszChars, size_t cchCount)
 	{
 		_wsprintf(szLog, SKIPCOUNT(szLog) L"PostString was prepared %u key events", (DWORD)cchSucceeded);
 		gpConEmu->LogString(szLog);
-		lbRc = PostConsoleEventPipe(pirChars, cchSucceeded);
+
+		if (mp_VCon->isGroupedInput())
+		{
+			struct implPost
+			{
+				MSG64* pirChars;
+				size_t cchSucceeded;
+
+				static bool DoPost(CVirtualConsole* pVCon, LPARAM lParam)
+				{
+					implPost* p = (implPost*)lParam;
+					pVCon->RCon()->PostConsoleEventPipe(p->pirChars, p->cchSucceeded);
+					return true;
+				}
+			} impl = {pirChars, cchSucceeded};
+			CVConGroup::EnumVCon(evf_Visible, implPost::DoPost, (LPARAM)&impl);
+			lbRc = true;
+		}
+		else
+		{
+			lbRc = PostConsoleEventPipe(pirChars, cchSucceeded);
+		}
 	}
 	else
 	{
@@ -1854,6 +1902,28 @@ bool CRealConsole::PostKeyUp(WORD vkKey, DWORD dwControlState, wchar_t wch, int 
 	if (ScanCode == -1)
 		ScanCode = MapVirtualKey(vkKey, 0/*MAPVK_VK_TO_VSC*/);
 
+	if (dwControlState == 0)
+	{
+		switch (vkKey)
+		{
+		case VK_RMENU:
+			dwControlState = ENHANCED_KEY;
+		case VK_LMENU:
+			vkKey = VK_MENU;
+			break;
+
+		case VK_RCONTROL:
+			dwControlState = ENHANCED_KEY;
+		case VK_LCONTROL:
+			vkKey = VK_CONTROL;
+			break;
+		}
+	}
+	else
+	{
+		_ASSERTE(vkKey!=VK_LMENU && vkKey!=VK_RMENU && vkKey!=VK_LCONTROL && vkKey!=VK_RCONTROL);
+	}
+
 	INPUT_RECORD r = {KEY_EVENT};
 	r.Event.KeyEvent.bKeyDown = FALSE;
 	r.Event.KeyEvent.wRepeatCount = 1;
@@ -1869,11 +1939,15 @@ bool CRealConsole::DeleteWordKeyPress(bool bTestOnly /*= false*/)
 {
 	DWORD nActivePID = GetActivePID();
 	if (!nActivePID || (mp_ABuf->m_Type != rbt_Primary) || isFar() || isNtvdm())
+	{
 		return false;
+	}
 
 	const AppSettings* pApp = gpSet->GetAppSettings(GetActiveAppSettingsId());
 	if (!pApp || !pApp->CTSDeleteLeftWord())
+	{
 		return false;
+	}
 
 	if (!bTestOnly)
 	{
@@ -2410,7 +2484,7 @@ wrap:
 int CRealConsole::WorkerExFilter(unsigned int code, struct _EXCEPTION_POINTERS *ep, LPCTSTR szFile, UINT nLine)
 {
 	wchar_t szInfo[100];
-	_wsprintf(szInfo, SKIPLEN(countof(szInfo)) L"Exception 0x%08X triggered in CRealConsole::MonitorThreadWorker", code);
+	_wsprintf(szInfo, SKIPLEN(countof(szInfo)) L"Exception 0x%08X triggered in CRealConsole::MonitorThreadWorker TID=%u", code, GetCurrentThreadId());
 
 	AssertBox(szInfo, szFile, nLine, ep);
 
@@ -3253,7 +3327,7 @@ BOOL CRealConsole::StartMonitorThread()
 	//_ASSERTE(mb_Detached || mh_MainSrv!=NULL); -- процесс теперь запускаем в MonitorThread
 	DWORD nCreateBegin = GetTickCount();
 	SetConStatus(L"Initializing ConEmu (4)", cso_ResetOnConsoleReady|cso_Critical);
-	mh_MonitorThread = CreateThread(NULL, 0, MonitorThread, (LPVOID)this, 0, &mn_MonitorThreadID);
+	mh_MonitorThread = apiCreateThread(MonitorThread, (LPVOID)this, &mn_MonitorThreadID, "RCon::MonitorThread ID=%i", mp_VCon->ID());
 	SetConStatus(L"Initializing ConEmu (5)", cso_ResetOnConsoleReady|cso_Critical);
 	DWORD nCreateEnd = GetTickCount();
 	DWORD nThreadCreationTime = nCreateEnd - nCreateBegin;
@@ -3268,7 +3342,7 @@ BOOL CRealConsole::StartMonitorThread()
 		LogString(szInfo);
 	}
 
-	//mh_InputThread = CreateThread(NULL, 0, InputThread, (LPVOID)this, 0, &mn_InputThreadID);
+	//mh_InputThread = apiCreateThread(NULL, 0, InputThread, (LPVOID)this, 0, &mn_InputThreadID);
 
 	if (mh_MonitorThread == NULL /*|| mh_InputThread == NULL*/)
 	{
@@ -3283,6 +3357,12 @@ BOOL CRealConsole::StartMonitorThread()
 	return lbRc;
 }
 
+void CRealConsole::PrepareDefaultColors()
+{
+	BYTE nTextColorIdx /*= 7*/, nBackColorIdx /*= 0*/, nPopTextColorIdx /*= 5*/, nPopBackColorIdx /*= 15*/;
+	PrepareDefaultColors(nTextColorIdx, nBackColorIdx, nPopTextColorIdx, nPopBackColorIdx);
+}
+
 void CRealConsole::PrepareDefaultColors(BYTE& nTextColorIdx, BYTE& nBackColorIdx, BYTE& nPopTextColorIdx, BYTE& nPopBackColorIdx, bool bUpdateRegistry /*= false*/, HKEY hkConsole /*= NULL*/)
 {
 	//nTextColorIdx = 7; nBackColorIdx = 0; nPopTextColorIdx = 5; nPopBackColorIdx = 15;
@@ -3292,18 +3372,22 @@ void CRealConsole::PrepareDefaultColors(BYTE& nTextColorIdx, BYTE& nBackColorIdx
 	const AppSettings* pApp = gpSet->GetAppSettings(GetDefaultAppSettingsId());
 	_ASSERTE(pApp!=NULL);
 
-	// User choose special palette for this console?
-	const ColorPalette* pPal = NULL;
-	_ASSERTE(countof(pApp->szPaletteName)>0); // must be array, not pointer
-	LPCWSTR pszPalette = (m_Args.pszPalette && *m_Args.pszPalette) ? m_Args.pszPalette
-		: (pApp->OverridePalette && *pApp->szPaletteName) ? pApp->szPaletteName
-		: NULL;
-	if (pszPalette && *pszPalette)
+	// May be palette was inherited from RealConsole (Win+G attach)
+	const ColorPalette* pPal = mp_VCon->m_SelfPalette.bPredefined ? &mp_VCon->m_SelfPalette : NULL;
+	// User's choosed special palette for this console?
+	if (!pPal)
 	{
-		int iPalIdx = gpSet->PaletteGetIndex(pszPalette);
-		if (iPalIdx >= 0)
+		_ASSERTE(countof(pApp->szPaletteName)>0); // must be array, not pointer
+		LPCWSTR pszPalette = (m_Args.pszPalette && *m_Args.pszPalette) ? m_Args.pszPalette
+			: (pApp->OverridePalette && *pApp->szPaletteName) ? pApp->szPaletteName
+			: NULL;
+		if (pszPalette && *pszPalette)
 		{
-			pPal = gpSet->PaletteGet(iPalIdx);
+			int iPalIdx = gpSet->PaletteGetIndex(pszPalette);
+			if (iPalIdx >= 0)
+			{
+				pPal = gpSet->PaletteGet(iPalIdx);
+			}
 		}
 	}
 
@@ -3754,7 +3838,7 @@ bool CRealConsole::StartDebugger(StartDebugType sdt)
 			int W = TextWidth();
 			int H = TextHeight();
 			_wsprintf(szExe, SKIPLEN(countof(szExe)) L"\"%s\" /ATTACH /GID=%i /GHWND=%08X /BW=%i /BH=%i /BZ=%u /ROOT \"%s\" /DEBUGPID=%i ",
-				pszServer, dwSelfPID, (DWORD)ghWnd, W, H, LONGOUTPUTHEIGHT_MAX, pszServer, dwPID);
+				pszServer, dwSelfPID, LODWORD(ghWnd), W, H, LONGOUTPUTHEIGHT_MAX, pszServer, dwPID);
 		} break;
 	default:
 		_ASSERTE(FALSE && "Unsupported debugger mode");
@@ -4298,6 +4382,15 @@ BOOL CRealConsole::StartProcessInt(LPCWSTR& lpszCmd, wchar_t*& psCurCmd, LPCWSTR
 
 	_ASSERTE(mn_RunTime==0 && mn_StartTick==0); // еще не должно быть установлено или должно быть сброшено
 
+	LPCWSTR lpszConEmuC = mp_ConEmu->ConEmuCExeFull(lpszCmd);
+
+	GetLocalTime(&mst_ServerStartingTime);
+	LPSYSTEMTIME lpst = (lstrcmpi(PointToName(lpszConEmuC), L"ConEmuC64.exe") == 0) ? &mp_ConEmu->mst_LastConsole64StartTime : &mp_ConEmu->mst_LastConsole32StartTime;
+	bool bIsFirstConsole = ((lpst->wYear != mst_ServerStartingTime.wYear)
+							|| (lpst->wMonth != mst_ServerStartingTime.wMonth)
+							|| (lpst->wDay != mst_ServerStartingTime.wDay));
+	*lpst = mst_ServerStartingTime;
+
 	int nCurLen = 0;
 	if (lpszCmd == NULL)
 	{
@@ -4305,7 +4398,7 @@ BOOL CRealConsole::StartProcessInt(LPCWSTR& lpszCmd, wchar_t*& psCurCmd, LPCWSTR
 		lpszCmd = L"";
 	}
 	int nLen = _tcslen(lpszCmd);
-	nLen += _tcslen(mp_ConEmu->ms_ConEmuExe) + 330 + MAX_PATH*2;
+	nLen += _tcslen(mp_ConEmu->ms_ConEmuExe) + 350 + MAX_PATH*2;
 	MCHKHEAP;
 	psCurCmd = (wchar_t*)malloc(nLen*sizeof(wchar_t));
 	_ASSERTE(psCurCmd);
@@ -4326,7 +4419,7 @@ BOOL CRealConsole::StartProcessInt(LPCWSTR& lpszCmd, wchar_t*& psCurCmd, LPCWSTR
 
 	_wcscat_c(psCurCmd, nLen, L"\"");
 	// Copy to psCurCmd full path to ConEmuC.exe or ConEmuC64.exe
-	_wcscat_c(psCurCmd, nLen, mp_ConEmu->ConEmuCExeFull(lpszCmd));
+	_wcscat_c(psCurCmd, nLen, lpszConEmuC);
 	//lstrcat(psCurCmd, L"\\");
 	//lstrcpy(psCurCmd, mp_ConEmu->ms_ConEmuCExeName);
 	_wcscat_c(psCurCmd, nLen, L"\" ");
@@ -4335,6 +4428,11 @@ BOOL CRealConsole::StartProcessInt(LPCWSTR& lpszCmd, wchar_t*& psCurCmd, LPCWSTR
 	{
 		m_Args.Detached = crb_On;
 		_wcscat_c(psCurCmd, nLen, L" /ADMIN ");
+	}
+
+	if (!bIsFirstConsole)
+	{
+		_wcscat_c(psCurCmd, nLen, L"/SKIPHOOKERS ");
 	}
 
 	if ((gpSet->nConInMode != (DWORD)-1) || (m_Args.OverwriteMode == crb_On))
@@ -4363,7 +4461,7 @@ BOOL CRealConsole::StartProcessInt(LPCWSTR& lpszCmd, wchar_t*& psCurCmd, LPCWSTR
 	nCurLen = _tcslen(psCurCmd);
 	_wsprintf(psCurCmd+nCurLen, SKIPLEN(nLen-nCurLen)
 		        L"/AID=%u /GID=%u /GHWND=%08X /BW=%i /BH=%i /BZ=%i \"/FN=%s\" /FW=%i /FH=%i /TA=%08X",
-		        nAID, GetCurrentProcessId(), (DWORD)ghWnd, nWndWidth, nWndHeight, mn_DefaultBufferHeight,
+		        nAID, GetCurrentProcessId(), LODWORD(ghWnd), nWndWidth, nWndHeight, mn_DefaultBufferHeight,
 		        gpSet->ConsoleFont.lfFaceName, gpSet->ConsoleFont.lfWidth, gpSet->ConsoleFont.lfHeight,
 		        nColors);
 
@@ -5602,7 +5700,7 @@ bool CRealConsole::PostConsoleMessage(HWND hWnd, UINT nMsg, WPARAM wParam, LPARA
 		WIN3264TEST(L", x%08X",L", x%08X%08X")
 		WIN3264TEST(L", x%08X",L", x%08X%08X")
 		L")\n",
-		(DWORD)hWnd, nMsg, WIN3264WSPRINT(wParam), WIN3264WSPRINT(lParam));
+		LODWORD(hWnd), nMsg, WIN3264WSPRINT(wParam), WIN3264WSPRINT(lParam));
 	DEBUGSTRSENDMSG(szDbg);
 	#endif
 
@@ -5750,7 +5848,7 @@ void CRealConsole::StopThread(BOOL abRecreating)
 			DEBUGSTRPROC(L"### Main Thread wating timeout, terminating...\n");
 			_ASSERTE(FALSE && "Terminating mh_MonitorThread");
 			mb_WasForceTerminated = TRUE;
-			TerminateThread(mh_MonitorThread, 1);
+			apiTerminateThread(mh_MonitorThread, 1);
 		}
 		else
 		{
@@ -5772,7 +5870,7 @@ void CRealConsole::StopThread(BOOL abRecreating)
 		{
 			// Должен быть NULL, если нет - значит завис предыдущий макрос
 			_ASSERTE(mh_PostMacroThread==NULL && "Terminating mh_PostMacroThread");
-			TerminateThread(mh_PostMacroThread, 100);
+			apiTerminateThread(mh_PostMacroThread, 100);
 			CloseHandle(mh_PostMacroThread);
 		}
 	}
@@ -5796,7 +5894,7 @@ void CRealConsole::StopThread(BOOL abRecreating)
 	//if (mh_InputThread) {
 	//    if (WaitForSingleObject(mh_InputThread, 300) != WAIT_OBJECT_0) {
 	//        DEBUGSTRPROC(L"### Input Thread waiting timeout, terminating...\n");
-	//        TerminateThread(mh_InputThread, 1);
+	//        apiTerminateThread(mh_InputThread, 1);
 	//    } else {
 	//        DEBUGSTRPROC(L"Input Thread closed normally\n");
 	//    }
@@ -8379,7 +8477,7 @@ void CRealConsole::ShowGuiClientExt(int nMode, BOOL bDetach /*= FALSE*/) // -1 T
 		{
 			wchar_t sInfo[200];
 			_wsprintf(sInfo, SKIPLEN(countof(sInfo)) L"ShowGuiClientExtern: PID=%u, hGuiWnd=x%08X, bExtern=%i, bDetach=%u",
-				m_ChildGui.nGuiWndPID, (DWORD)m_ChildGui.hGuiWnd, nMode, bDetach);
+				m_ChildGui.nGuiWndPID, LODWORD(m_ChildGui.hGuiWnd), nMode, bDetach);
 			mp_ConEmu->LogString(sInfo);
 		}
 
@@ -8603,8 +8701,8 @@ void CRealConsole::SetHwnd(HWND ahConWnd, BOOL abForceApprove /*= FALSE*/)
 
 	hConWnd = ahConWnd;
 	SetWindowLongPtr(mp_VCon->GetView(), 0, (LONG_PTR)ahConWnd);
-	SetWindowLong(mp_VCon->GetBack(), 0, (DWORD)ahConWnd);
-	SetWindowLong(mp_VCon->GetBack(), 4, (DWORD)mp_VCon->GetView());
+	SetWindowLong(mp_VCon->GetBack(), 0, LODWORD(ahConWnd));
+	SetWindowLong(mp_VCon->GetBack(), 4, LODWORD(mp_VCon->GetView()));
 	//if (mb_Detached && ahConWnd) // Не сбрасываем, а то нить может не успеть!
 	//  mb_Detached = FALSE; // Сброс флажка, мы уже подключились
 	//OpenColorMapping();
@@ -8618,7 +8716,7 @@ void CRealConsole::SetHwnd(HWND ahConWnd, BOOL abForceApprove /*= FALSE*/)
 	if (ms_VConServer_Pipe[0] == 0)
 	{
 		// Запустить серверный пайп
-		_wsprintf(ms_VConServer_Pipe, SKIPLEN(countof(ms_VConServer_Pipe)) CEGUIPIPENAME, L".", (DWORD)hConWnd); //был mn_MainSrv_PID //-V205
+		_wsprintf(ms_VConServer_Pipe, SKIPLEN(countof(ms_VConServer_Pipe)) CEGUIPIPENAME, L".", LODWORD(hConWnd)); //был mn_MainSrv_PID //-V205
 
 		m_RConServer.Start();
 	}
@@ -9423,7 +9521,7 @@ BOOL CRealConsole::SetOtherWindowPos(HWND hWnd, HWND hWndInsertAfter, int X, int
 	{
 		wchar_t sInfo[200];
 		_wsprintf(sInfo, SKIPLEN(countof(sInfo)) L"SetOtherWindowPos: hWnd=x%08X, hInsertAfter=x%08X, X=%i, Y=%i, CX=%i, CY=%i, Flags=x%04X",
-			(DWORD)hWnd, (DWORD)hWndInsertAfter, X,Y,cx,cy, uFlags);
+			LODWORD(hWnd), LODWORD(hWndInsertAfter), X,Y,cx,cy, uFlags);
 		mp_ConEmu->LogString(sInfo);
 	}
 
@@ -9462,7 +9560,9 @@ BOOL CRealConsole::SetOtherWindowPos(HWND hWnd, HWND hWndInsertAfter, int X, int
 			wchar_t szClass[64], szMessage[128];
 
 			if (!GetClassName(hWnd, szClass, 63))
-				_wsprintf(szClass, SKIPLEN(countof(szClass)) L"0x%08X", (DWORD)hWnd); else szClass[63] = 0; //-V205
+				_wsprintf(szClass, SKIPLEN(countof(szClass)) L"0x%08X", LODWORD(hWnd));
+			else
+				szClass[63] = 0;
 
 			_wsprintf(szMessage, SKIPLEN(countof(szMessage)) L"SetWindowPos(%s) failed!", szClass);
 			DisplayLastError(szMessage, dwErr);
@@ -10561,7 +10661,21 @@ void CRealConsole::RenameWindow(LPCWSTR asNewWindowText /*= NULL*/)
 
 int CRealConsole::GetRootProcessIcon()
 {
+	if (!this) return -1;
 	return gpSet->isTabIcons ? mn_RootProcessIcon : -1;
+}
+
+LPCWSTR CRealConsole::GetRootProcessName()
+{
+	if (!this || !*ms_RootProcessName)
+		return NULL;
+	return ms_RootProcessName;
+}
+
+void CRealConsole::NeedRefreshRootProcessIcon()
+{
+	mb_NeedLoadRootProcessIcon = true;
+	GetDefaultAppSettingsId();
 }
 
 int CRealConsole::GetTabCount(BOOL abVisibleOnly /*= FALSE*/)
@@ -11349,7 +11463,7 @@ BOOL CRealConsole::PrepareOutputFile(BOOL abUnicodeText, wchar_t* pszFilePathNam
 	CESERVER_CONSAVE_MAPHDR* pHdr = NULL;
 	CESERVER_CONSAVE_MAP* pData = NULL;
 
-	StoredOutputHdr.InitName(CECONOUTPUTNAME, (DWORD)hConWnd); //-V205
+	StoredOutputHdr.InitName(CECONOUTPUTNAME, LODWORD(hConWnd)); //-V205
 	if (!(pHdr = StoredOutputHdr.Open()) || !pHdr->sCurrentMap[0])
 	{
 		DisplayLastError(L"Stored output mapping was not created!");
@@ -12776,6 +12890,8 @@ void CRealConsole::SetPaletteName(LPCWSTR asPaletteName)
 		pszNew = lstrdup(asPaletteName);
 	m_Args.pszPalette = pszNew;
 	SafeFree(pszOld);
+	_ASSERTE(!mp_VCon->m_SelfPalette.bPredefined);
+	PrepareDefaultColors();
 }
 
 LPCWSTR CRealConsole::GetCmd(bool bThisOnly /*= false*/)
@@ -12849,14 +12965,6 @@ void CRealConsole::logProgress(LPCWSTR asFormat, int V1, int V2)
 
 	wchar_t szInfo[100];
 	_wsprintf(szInfo, SKIPLEN(countof(szInfo)-1) asFormat, V1, V2);
-	if (*szInfo)
-	{
-		int nLen = lstrlen(szInfo);
-		if (szInfo[nLen-1] != L'\n')
-		{
-			szInfo[nLen++] = L'\n'; szInfo[nLen] = 0;
-		}
-	}
 
 	#ifdef _DEBUG
 	if (!mp_Log)
@@ -13202,8 +13310,7 @@ void CRealConsole::UpdateTextColorSettings(BOOL ChangeTextAttr /*= TRUE*/, BOOL 
 		}
 	}
 
-	BYTE nTextColorIdx /*= 7*/, nBackColorIdx /*= 0*/, nPopTextColorIdx /*= 5*/, nPopBackColorIdx /*= 15*/;
-	PrepareDefaultColors(nTextColorIdx, nBackColorIdx, nPopTextColorIdx, nPopBackColorIdx);
+	PrepareDefaultColors();
 
 	CESERVER_REQ *pIn = ExecuteNewCmd(CECMD_SETCONCOLORS, sizeof(CESERVER_REQ_HDR)+sizeof(CESERVER_REQ_SETCONSOLORS));
 	if (!pIn)
@@ -13513,7 +13620,7 @@ void CRealConsole::GuiWndFocusStore()
 	if (gpSetCls->isAdvLogging && bHwndChanged)
 	{
 		wchar_t szInfo[100];
-		_wsprintf(szInfo, SKIPLEN(countof(szInfo)) L"GuiWndFocusStore for PID=%u, hWnd=x%08X", nPID, (DWORD)m_ChildGui.hGuiWndFocusStore);
+		_wsprintf(szInfo, SKIPLEN(countof(szInfo)) L"GuiWndFocusStore for PID=%u, hWnd=x%08X", nPID, LODWORD(m_ChildGui.hGuiWndFocusStore));
 		mp_ConEmu->LogString(szInfo);
 	}
 }
@@ -13551,7 +13658,7 @@ void CRealConsole::GuiWndFocusRestore(bool bForce /*= false*/)
 
 		wchar_t sInfo[200];
 		_wsprintf(sInfo, SKIPLEN(countof(sInfo)) L"GuiWndFocusRestore to x%08X, hGuiWnd=x%08X, Attach=%s, Err=%u%s",
-			(DWORD)hSetFocus, (DWORD)m_ChildGui.hGuiWnd,
+			LODWORD(hSetFocus), LODWORD(m_ChildGui.hGuiWnd),
 			bAttachCalled ? (bAttached ? L"Called" : L"Failed") : L"Skipped", nErr,
 			bSkipInvisible ? L", SkipInvisible" : L"");
 		DEBUGSTRFOCUS(sInfo);
@@ -13668,8 +13775,7 @@ void CRealConsole::SetGuiMode(DWORD anFlags, HWND ahGuiWnd, DWORD anStyle, DWORD
 				GetWindowRect(hBack, &rc);
 				_wsprintf(szTemp, SKIPLEN(countof(szTemp)) L"hGuiWnd=x%08X, Style=x%08X, StyleEx=x%08X, Prev={%i,%i}-{%i,%i}, Back={%i,%i}-{%i,%i}",
 					(DWORD)(DWORD_PTR)ahGuiWnd, (DWORD)(DWORD_PTR)hBack, anStyle, anStyleEx,
-					arcPrev.left, arcPrev.top, arcPrev.right, arcPrev.bottom,
-					rc.left, rc.top, rc.right, rc.bottom);
+					LOGRECTCOORDS(arcPrev), LOGRECTCOORDS(rc));
 				break;
 			case 1:
 				pszLabel = L"File";
@@ -14394,7 +14500,7 @@ void CRealConsole::CreateColorMapping()
 	AnnotationHeader *pHdr = NULL;
 	_ASSERTE(mp_VCon->GetView()!=NULL);
 	// 111101 - было "hConWnd", но GetConsoleWindow теперь перехватывается.
-	m_TrueColorerMap.InitName(AnnotationShareName, (DWORD)sizeof(AnnotationInfo), (DWORD)mp_VCon->GetView()); //-V205
+	m_TrueColorerMap.InitName(AnnotationShareName, (DWORD)sizeof(AnnotationInfo), LODWORD(mp_VCon->GetView())); //-V205
 
 	WARNING("Удалить и переделать!");
 	COORD crMaxSize = mp_RBuf->GetMaxSize();
@@ -14541,7 +14647,7 @@ BOOL CRealConsole::OpenMapHeader(BOOL abFromAttach)
 
 	//_ASSERTE(mh_FileMapping == NULL);
 	//CloseMapData();
-	m_ConsoleMap.InitName(CECONMAPNAME, (DWORD)hConWnd); //-V205
+	m_ConsoleMap.InitName(CECONMAPNAME, LODWORD(hConWnd)); //-V205
 
 	if (!m_ConsoleMap.Open())
 	{
@@ -14916,7 +15022,7 @@ void CRealConsole::PostCommand(DWORD anCmdID, DWORD anCmdSize, LPCVOID ptrData)
 		{
 			// Должен быть NULL, если нет - значит завис предыдущий макрос
 			_ASSERTE(mh_PostMacroThread==NULL && "Terminating mh_PostMacroThread");
-			TerminateThread(mh_PostMacroThread, 100);
+			apiTerminateThread(mh_PostMacroThread, 100);
 			CloseHandle(mh_PostMacroThread);
 		}
 	}
@@ -14929,7 +15035,7 @@ void CRealConsole::PostCommand(DWORD anCmdID, DWORD anCmdSize, LPCVOID ptrData)
 	pArg->nCmdSize = anCmdSize;
 	if (ptrData && anCmdSize)
 		memmove(pArg->Data, ptrData, anCmdSize);
-	mh_PostMacroThread = CreateThread(NULL, 0, PostMacroThread, pArg, 0, &mn_PostMacroThreadID);
+	mh_PostMacroThread = apiCreateThread(PostMacroThread, pArg, &mn_PostMacroThreadID, "RCon::PostMacroThread#1 ID=%i", mp_VCon->ID());
 	if (mh_PostMacroThread == NULL)
 	{
 		// Если не удалось запустить нить
@@ -15096,7 +15202,7 @@ void CRealConsole::PostMacro(LPCWSTR asMacro, BOOL abAsync /*= FALSE*/)
 				// Должен быть NULL, если нет - значит завис предыдущий макрос
 				_ASSERTE(mh_PostMacroThread==NULL && "Terminating mh_PostMacroThread");
 				LogString(L"Terminating mh_PostMacroThread (hung)", true);
-				TerminateThread(mh_PostMacroThread, 100);
+				apiTerminateThread(mh_PostMacroThread, 100);
 				CloseHandle(mh_PostMacroThread);
 			}
 		}
@@ -15108,7 +15214,7 @@ void CRealConsole::PostMacro(LPCWSTR asMacro, BOOL abAsync /*= FALSE*/)
 		pArg->bPipeCommand = FALSE;
 		_wcscpy_c(pArg->szMacro, nLen+1, asMacro);
 		LogString("... executing macro asynchronously", true);
-		mh_PostMacroThread = CreateThread(NULL, 0, PostMacroThread, pArg, 0, &mn_PostMacroThreadID);
+		mh_PostMacroThread = apiCreateThread(PostMacroThread, pArg, &mn_PostMacroThreadID, "RCon::PostMacroThread#2 ID=%i", mp_VCon->ID());
 		if (mh_PostMacroThread == NULL)
 		{
 			// Если не удалось запустить нить

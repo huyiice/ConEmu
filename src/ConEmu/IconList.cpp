@@ -190,17 +190,25 @@ int CIconList::CreateTabIcon(LPCWSTR asIconDescr, bool bAdmin, LPCWSTR asWorkDir
 			continue;
 		if (lstrcmpi(icn.pszIconDescr, asIconDescr) != 0)
 			continue;
+
+		// If tab was not created yet?
+		if (icn.bWasNotLoaded && mh_TabIcons)
+		{
+			m_Icons.erase(i);
+			break;
+		}
+
 		// Already was created!
 		iCreatedIcon = icn.nIconIdx;
 		goto wrap;
 	}
 
-	iCreatedIcon = CreateTabIconInt(asIconDescr, bAdmin, asWorkDir);
+	iCreatedIcon = mh_TabIcons ? CreateTabIconInt(asIconDescr, bAdmin, asWorkDir) : -1;
 
 	if (iCreatedIcon == -1)
 	{
 		// To avoid numerous CreateTabIconInt calls - just remember "No icon" for that asIconDescr
-		TabIconCache DummyIcon = {lstrdup(asIconDescr), bAdmin, -1};
+		TabIconCache DummyIcon = {lstrdup(asIconDescr), -1, bAdmin, (mh_TabIcons==NULL)};
 		m_Icons.push_back(DummyIcon);
 	}
 wrap:
@@ -271,7 +279,7 @@ int CIconList::CreateTabIconInt(LPCWSTR asIconDescr, bool bAdmin, LPCWSTR asWork
 		int iIconIdxAdm = -1;
 		iIconIdx = ImageList_ReplaceIcon(mh_TabIcons, -1, hFileIcon);
 
-		TabIconCache NewIcon = {lstrdup(asIconDescr), false, iIconIdx};
+		TabIconCache NewIcon = {lstrdup(asIconDescr), iIconIdx, false};
 		m_Icons.push_back(NewIcon);
 
 		if (mn_AdminIcon >= 0)
@@ -288,7 +296,7 @@ int CIconList::CreateTabIconInt(LPCWSTR asIconDescr, bool bAdmin, LPCWSTR asWork
 					iIconIdxAdm = ImageList_ReplaceIcon(mh_TabIcons, -1, hNewIcon);
 					DestroyIcon(hNewIcon);
 
-					TabIconCache AdmIcon = {lstrdup(asIconDescr), true, iIconIdxAdm};
+					TabIconCache AdmIcon = {lstrdup(asIconDescr), iIconIdxAdm, true};
 					m_Icons.push_back(AdmIcon);
 
 					if (bAdmin && (iIconIdxAdm > 0))

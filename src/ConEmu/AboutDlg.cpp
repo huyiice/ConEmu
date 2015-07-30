@@ -319,6 +319,11 @@ INT_PTR WINAPI ConEmuAbout::aboutProc(HWND hDlg, UINT messg, WPARAM wParam, LPAR
 			if (mp_DpiAware)
 				mp_DpiAware->Detach();
 			EndDialog(hDlg, IDOK);
+
+			for (size_t i = 0; i < countof(m_Btns); i++)
+			{
+				SafeDelete(m_Btns[i].pImg);
+			}
 			//else
 			//	DestroyWindow(hDlg);
 			break;
@@ -552,7 +557,7 @@ void ConEmuAbout::OnInfo_About(LPCWSTR asPageName /*= NULL*/)
 void ConEmuAbout::OnInfo_WhatsNew(bool bLocal)
 {
 	wchar_t sFile[MAX_PATH+80];
-	int iExec = -1;
+	INT_PTR iExec = -1;
 
 	if (bLocal)
 	{
@@ -561,7 +566,7 @@ void ConEmuAbout::OnInfo_WhatsNew(bool bLocal)
 
 		if (FileExists(sFile))
 		{
-			iExec = (int)ShellExecute(ghWnd, L"open", sFile, NULL, NULL, SW_SHOWNORMAL);
+			iExec = (INT_PTR)ShellExecute(ghWnd, L"open", sFile, NULL, NULL, SW_SHOWNORMAL);
 			if (iExec >= 32)
 			{
 				return;
@@ -571,13 +576,13 @@ void ConEmuAbout::OnInfo_WhatsNew(bool bLocal)
 
 	wcscpy_c(sFile, gsWhatsNew);
 
-	iExec = (int)ShellExecute(ghWnd, L"open", sFile, NULL, NULL, SW_SHOWNORMAL);
+	iExec = (INT_PTR)ShellExecute(ghWnd, L"open", sFile, NULL, NULL, SW_SHOWNORMAL);
 	if (iExec >= 32)
 	{
 		return;
 	}
 
-	DisplayLastError(L"File 'WhatsNew-ConEmu.txt' not found, go to web page failed", iExec);
+	DisplayLastError(L"File 'WhatsNew-ConEmu.txt' not found, go to web page failed", (int)LODWORD(iExec));
 }
 
 void ConEmuAbout::OnInfo_Help()
@@ -713,6 +718,7 @@ void ConEmuAbout::LoadResources()
 		{
 		case 0:
 			m_Btns[i].ResId = L"DONATE";
+			SafeDelete(m_Btns[i].pImg);
 			m_Btns[i].pImg = new CToolImg();
 			if (m_Btns[i].pImg && !m_Btns[i].pImg->CreateDonateButton())
 				SafeDelete(m_Btns[i].pImg);
@@ -721,6 +727,7 @@ void ConEmuAbout::LoadResources()
 			break;
 		case 1:
 			m_Btns[i].ResId = L"FLATTR";
+			SafeDelete(m_Btns[i].pImg);
 			m_Btns[i].pImg = new CToolImg();
 			if (m_Btns[i].pImg && !m_Btns[i].pImg->CreateFlattrButton())
 				SafeDelete(m_Btns[i].pImg);
@@ -781,7 +788,7 @@ void ConEmuAbout::DonateBtns_Add(HWND hDlg, int AlignLeftId, int AlignVCenterId)
 		hCtrl = CreateWindow(L"STATIC", m_Btns[i].ResId,
 			WS_CHILD|WS_VISIBLE|SS_NOTIFY|SS_OWNERDRAW,
 			X, nY, nDispW, nDispH,
-			hDlg, (HMENU)m_Btns[i].nCtrlId, g_hInstance, NULL);
+			hDlg, (HMENU)(DWORD_PTR)m_Btns[i].nCtrlId, g_hInstance, NULL);
 
 		#ifdef _DEBUG
 		if (!hCtrl)

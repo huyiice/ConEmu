@@ -88,7 +88,7 @@ THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #define Alloc calloc
 
 #ifdef _DEBUG
-#define HEAPVAL //MCHKHEAP
+#define HEAPVAL MCHKHEAP
 #else
 #define HEAPVAL
 #endif
@@ -600,7 +600,7 @@ bool CRealBuffer::LoadAlternativeConsole(LoadAltMode iMode /*= lam_Default*/)
 		DWORD cchMaxBufferSize = 0;
 		size_t nMaxSize = 0;
 
-		StoredOutputHdr.InitName(CECONOUTPUTNAME, (DWORD)mp_RCon->hConWnd); //-V205
+		StoredOutputHdr.InitName(CECONOUTPUTNAME, LODWORD(mp_RCon->hConWnd));
 		if (!(pHdr = StoredOutputHdr.Open()) || !pHdr->sCurrentMap[0])
 		{
 			DisplayLastError(L"Stored output mapping was not created!");
@@ -683,7 +683,7 @@ BOOL CRealBuffer::SetConsoleSizeSrv(USHORT sizeX, USHORT sizeY, USHORT sizeBuffe
 		//Box(_T("Console was not created (CRealConsole::SetConsoleSize)"));
 		DEBUGSTRSIZE(L"SetConsoleSize skipped (!mp_RCon->hConWnd || !mp_RCon->ms_ConEmuC_Pipe)\n");
 
-		if (gpSetCls->isAdvLogging) mp_RCon->LogString("SetConsoleSize skipped (!mp_RCon->hConWnd || !mp_RCon->ms_ConEmuC_Pipe)");
+		mp_RCon->LogString("SetConsoleSize skipped (!mp_RCon->hConWnd || !mp_RCon->ms_ConEmuC_Pipe)");
 
 		return FALSE; // консоль пока не создана?
 	}
@@ -791,7 +791,6 @@ BOOL CRealBuffer::SetConsoleSizeSrv(USHORT sizeX, USHORT sizeY, USHORT sizeBuffe
 
 	char szInfo[128], szSizeCmd[32];
 
-	if (gpSetCls->isAdvLogging)
 	{
 		switch (anCmdID)
 		{
@@ -801,6 +800,8 @@ BOOL CRealBuffer::SetConsoleSizeSrv(USHORT sizeX, USHORT sizeY, USHORT sizeBuffe
 			lstrcpynA(szSizeCmd, "CECMD_CMDSTARTED", countof(szSizeCmd)); break;
 		case CECMD_CMDFINISHED:
 			lstrcpynA(szSizeCmd, "CECMD_CMDFINISHED", countof(szSizeCmd)); break;
+		case CECMD_SETSIZENOSYNC:
+			lstrcpynA(szSizeCmd, "CECMD_SETSIZENOSYNC", countof(szSizeCmd)); break;
 		default:
 			_wsprintfA(szSizeCmd, SKIPLEN(countof(szSizeCmd)) "SizeCmd=%u", anCmdID);
 		}
@@ -808,12 +809,6 @@ BOOL CRealBuffer::SetConsoleSizeSrv(USHORT sizeX, USHORT sizeY, USHORT sizeBuffe
 		           szSizeCmd, sizeX, sizeY, sizeBuffer, con.TopLeft.y, con.TopLeft.x);
 		mp_RCon->LogString(szInfo, TRUE);
 	}
-
-	#ifdef _DEBUG
-	wchar_t szDbgCmd[128]; _wsprintf(szDbgCmd, SKIPLEN(countof(szDbgCmd)) L"SetConsoleSize.ExecuteCmd(cx=%i, cy=%i, buf=%i, cmd=%i)\n",
-	                                 sizeX, sizeY, sizeBuffer, anCmdID);
-	DEBUGSTRSIZE(szDbgCmd);
-	#endif
 
 	dwTickStart = timeGetTime();
 	// С таймаутом
@@ -2905,7 +2900,7 @@ bool CRealBuffer::ProcessFarHyperlink(UINT messg, COORD crFrom, bool bUpdateScre
 		{
 			if (rc & etr_Url)
 			{
-				int iRc = (int)ShellExecute(ghWnd, L"open", szText, NULL, NULL, SW_SHOWNORMAL);
+				INT_PTR iRc = (INT_PTR)ShellExecute(ghWnd, L"open", szText, NULL, NULL, SW_SHOWNORMAL);
 				if (iRc <= 32)
 				{
 					DisplayLastError(szText, iRc, MB_ICONSTOP, L"URL open failed");

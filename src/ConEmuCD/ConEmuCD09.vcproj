@@ -423,6 +423,7 @@
       <File RelativePath="..\common\WConsole.h" />
       <File RelativePath="..\common\WFiles.h" />
       <File RelativePath="..\common\WObjects.h" />
+      <File RelativePath="..\common\WThreads.h" />
       <File RelativePath="..\common\WUser.h" />
       <File RelativePath="..\ConEmuHk\Console2.h" />
       <File RelativePath="..\ConEmuHk\Injects.h" />
@@ -430,7 +431,7 @@
       <File RelativePath=".\ConEmuC.h" />
       <File RelativePath=".\ConsoleHelp.h" />
       <File RelativePath=".\Debugger.h" />
-      <File RelativePath=".\Downloader.h" />
+      <File RelativePath=".\DownloaderCall.h" />
       <File RelativePath=".\ExitCodes.h" />
       <File RelativePath=".\GuiHooks.h" />
       <File RelativePath=".\Queue.h" />
@@ -466,6 +467,7 @@
       <File RelativePath="..\common\WConsole.cpp" />
       <File RelativePath="..\common\WFiles.cpp" />
       <File RelativePath="..\common\WObjects.cpp" />
+      <File RelativePath="..\common\WThreads.cpp" />
       <File RelativePath="..\common\WUser.cpp" />
       <File RelativePath="..\ConEmuHk\Injects.cpp" />
       <File RelativePath=".\ConEmuCmd.cpp" />
@@ -473,7 +475,7 @@
       <File RelativePath=".\ConProcess.cpp" />
       <File RelativePath=".\ConsoleMain.cpp" />
       <File RelativePath=".\Debugger.cpp" />
-      <File RelativePath=".\Downloader.cpp" />
+      <File RelativePath=".\DownloaderCall.cpp" />
       <File RelativePath=".\export.def" />
       <File RelativePath=".\GuiHooks.cpp" />
       <File RelativePath=".\InjectRemote.cpp" />

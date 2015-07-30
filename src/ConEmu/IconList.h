@@ -37,8 +37,9 @@ class CIconList
 protected:
 	struct TabIconCache {
 		wchar_t* pszIconDescr;
-		BOOL bAdmin;
 		int nIconIdx;
+		bool bAdmin;
+		bool bWasNotLoaded;
 	};
 	MSectionSimple* mpcs;
 	MArray<TabIconCache> m_Icons;

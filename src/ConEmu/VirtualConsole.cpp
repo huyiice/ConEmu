@@ -72,7 +72,6 @@ FEFF    ZERO WIDTH NO-BREAK SPACE
 #include "OptionsClass.h"
 #include "Background.h"
 #include "ConEmuPipe.h"
-#include "SetColorPalette.h"
 #include "TabID.h"
 #include "TabBar.h"
 #include "TaskBarGhost.h"
@@ -120,7 +119,7 @@ WARNING("Часто после разблокирования компьютер
 
 #ifdef _DEBUG
 //#undef HEAPVAL
-#define HEAPVAL //HeapValidate(mh_Heap, 0, NULL);
+#define HEAPVAL HeapValidate(mh_Heap, 0, NULL);
 #define HEAPVALPTR(p) //xf_validate(p)
 #define CURSOR_ALWAYS_VISIBLE
 #else
@@ -201,6 +200,8 @@ wchar_t CVirtualConsole::ms_HorzSingl[MAX_SPACES];
 //HMENU CVirtualConsole::mh_DebugPopup = NULL;
 //HMENU CVirtualConsole::mh_EditPopup = NULL;
 
+static LONG gnVConLastCreatedID = 0;
+
 #pragma warning(disable: 4355)
 CVirtualConsole::CVirtualConsole(CConEmuMain* pOwner, int index)
 	: CVConRelease(this)
@@ -214,6 +215,7 @@ CVirtualConsole::CVirtualConsole(CConEmuMain* pOwner, int index)
 	, m_DC(NULL)
 {
 	#pragma warning(default: 4355)
+	mn_ID = InterlockedIncrement(&gnVConLastCreatedID);
 	VConCreateLogger::Log(this, VConCreateLogger::eCreate);
 	mh_WndDC = NULL;
 }
@@ -284,6 +286,7 @@ bool CVirtualConsole::Constructor(RConStartArgs *args)
 	memset(&TransparentInfo, 0, sizeof(TransparentInfo));
 	isFade = false; isForeground = true;
 	mp_Colors = gpSet->GetColors(-1);
+	ZeroStruct(m_SelfPalette);
 	mn_AppSettingsChangCount = 0;
 	memset(&m_LeftPanelView, 0, sizeof(m_LeftPanelView));
 	memset(&m_RightPanelView, 0, sizeof(m_RightPanelView));
@@ -2186,7 +2189,7 @@ void CVirtualConsole::UpdateHighlightsRowCol()
 
 	if (isHighlightMouseRow())
 	{
-		RECT rect = {0, pix.Y, Width, pix.Y+nFontHeight};
+		RECT rect = {0, pix.Y, (LONG)Width, pix.Y+nFontHeight};
 		if (pos.Y >= 0)
 			PatInvertRect(hPaintDC, rect, hPaintDC, false);
 		m_HighlightInfo.m_Last.Y = pos.Y;
@@ -2196,7 +2199,7 @@ void CVirtualConsole::UpdateHighlightsRowCol()
 	if (isHighlightMouseCol())
 	{
 		// This will be not "precise" on other rows if using proportional font...
-		RECT rect = {pix.X, 0, pix.X+nFontWidth, Height};
+		RECT rect = {pix.X, 0, pix.X+nFontWidth, (LONG)Height};
 		if (pos.X >= 0)
 			PatInvertRect(hPaintDC, rect, hPaintDC, false);
 		m_HighlightInfo.m_Last.X = pos.X;
@@ -2607,6 +2610,87 @@ bool CVirtualConsole::LoadConsoleData()
 	return true;
 }
 
+void CVirtualConsole::SetSelfPalette(WORD wAttributes, WORD wPopupAttributes, const COLORREF (&ColorTable)[16])
+{
+	for (INT_PTR i = 0; i < 16; i++)
+	{
+		m_SelfPalette.Colors[i] = ColorTable[i];
+		m_SelfPalette.Colors[i+16] = ColorTable[i];
+	}
+
+	m_SelfPalette.nTextColorIdx = (BYTE)((wAttributes & 0x0F));
+	m_SelfPalette.nBackColorIdx = (BYTE)((wAttributes & 0xF0) >> 4);
+	m_SelfPalette.nPopTextColorIdx = (BYTE)((wPopupAttributes & 0x0F));
+	m_SelfPalette.nPopBackColorIdx = (BYTE)((wPopupAttributes & 0xF0) >> 4);
+
+	const ColorPalette* pFound = gpSet->PaletteFindByColors(true, &m_SelfPalette);
+
+	// If the matching palette does not exist - try to create temporary new one
+	if (!pFound)
+	{
+		CEStr lsPrefix;
+		LPCWSTR pszRootProcessName = mp_RCon->GetRootProcessName();
+		if (pszRootProcessName)
+		{
+			LPCWSTR pszExt = PointToExt(pszRootProcessName);
+			if (!pszExt || (pszExt > pszRootProcessName))
+			{
+				lsPrefix = lstrmerge(L"#Attached:", pszRootProcessName);
+				wchar_t* pszDot = lsPrefix.ms_Arg ? wcsrchr(lsPrefix.ms_Arg, L'.') : NULL;
+				if (pszDot)
+				{
+					*pszDot = 0;
+				}
+			}
+		}
+
+		CEStr szAutoName; wchar_t szSuffix[8];
+		// Don't create too many palettes...
+		for (int i = 0; i <= 99; i++)
+		{
+			if (!i)
+			{
+				if (lsPrefix.IsEmpty())
+					continue;
+				szAutoName.Set(lsPrefix);
+			}
+			else
+			{
+				_wsprintf(szSuffix, SKIPCOUNT(szSuffix) L":%02i", i);
+				szAutoName = lstrmerge(lsPrefix.IsEmpty() ? L"#Attached" : lsPrefix.ms_Arg, szSuffix);
+			}
+
+			if (gpSet->PaletteGetIndex(szAutoName) != -1)
+				continue;
+
+			break;
+		}
+
+		// Save new (temporary) palette
+		gpSet->PaletteSaveAs(szAutoName, false, CEDEF_ExtendColorIdx,
+			m_SelfPalette.nTextColorIdx, m_SelfPalette.nBackColorIdx,
+			m_SelfPalette.nPopTextColorIdx, m_SelfPalette.nPopBackColorIdx,
+			m_SelfPalette.Colors, false);
+		// And try to match it
+		pFound = gpSet->PaletteFindByColors(true, &m_SelfPalette);
+		_ASSERTE(pFound != NULL);
+	}
+
+	if (pFound)
+	{
+		mp_RCon->SetPaletteName(pFound->pszName);
+	}
+	else
+	{
+		m_SelfPalette.bPredefined = true;
+		m_SelfPalette.FadeInitialized = false;
+		gpSet->PrepareFadeColors(m_SelfPalette.Colors, m_SelfPalette.ColorsFade, &m_SelfPalette.FadeInitialized);
+		mp_RCon->PrepareDefaultColors();
+	}
+
+	Invalidate();
+}
+
 COLORREF* CVirtualConsole::GetColors()
 {
 	return GetColors(isFade);
@@ -2614,10 +2698,19 @@ COLORREF* CVirtualConsole::GetColors()
 
 COLORREF* CVirtualConsole::GetColors(bool bFade)
 {
-	// Was specified palette forced to this console?
-	LPCWSTR pszPalName = mp_RCon ? mp_RCon->GetArgs().pszPalette : NULL;
+	if (!this || !mp_RCon)
+	{
+		return gpSet->GetColors(bFade);
+	}
 
-	if (pszPalName && *pszPalName)
+	// Was specified palette forced to this console?
+	LPCWSTR pszPalName = NULL;
+
+	if (m_SelfPalette.bPredefined)
+	{
+		mp_Colors = m_SelfPalette.GetColors(bFade);
+	}
+	else if (((pszPalName = mp_RCon->GetArgs().pszPalette) != NULL) && *pszPalName)
 	{
 		mp_Colors = gpSet->GetPaletteColors(pszPalName, bFade);
 	}
@@ -2634,8 +2727,18 @@ COLORREF* CVirtualConsole::GetColors(bool bFade)
 
 int CVirtualConsole::GetPaletteIndex()
 {
+	if (!this || !mp_RCon)
+	{
+		return -1;
+	}
+
 	int iActiveIndex = -1;
-	if (this && mp_RCon)
+
+	if (m_SelfPalette.bPredefined)
+	{
+		iActiveIndex = 0; // Treat it as "Windows Default"
+	}
+	else
 	{
 		LPCWSTR pszPalName = mp_RCon->GetArgs().pszPalette;
 		if (pszPalName && *pszPalName)
@@ -2648,6 +2751,7 @@ int CVirtualConsole::GetPaletteIndex()
 			iActiveIndex = pAppSet ? pAppSet->GetPaletteIndex() : -1;
 		}
 	}
+
 	return iActiveIndex;
 }
 
@@ -2668,6 +2772,7 @@ bool CVirtualConsole::ChangePalette(int aNewPaletteIdx)
 		bPopupChanged = (pOldPal->nPopTextColorIdx != pPal->nPopTextColorIdx) || (pOldPal->nPopBackColorIdx != pPal->nPopBackColorIdx);
 	}
 
+	m_SelfPalette.bPredefined = false;
 	mp_RCon->SetPaletteName(pPal->pszName);
 	mp_RCon->UpdateTextColorSettings(bTextChanged, bPopupChanged);
 
@@ -2746,7 +2851,8 @@ bool CVirtualConsole::UpdatePrepare(HDC *ahDc, MSectionLock *pSDC, MSectionLock 
 
 	#ifdef _DEBUG
 	COORD dbgWinSize = winSize;
-	COORD dbgTxtSize = {TextWidth,TextHeight};
+	_ASSERTE(!HIWORD(TextWidth)&&!HIWORD(TextHeight));
+	COORD dbgTxtSize = {LOSHORT(TextWidth),LOSHORT(TextHeight)};
 	#endif
 
 	_ASSERTE(isMainThread());
@@ -4368,12 +4474,15 @@ void CVirtualConsole::UpdateCursorDraw(HDC hPaintDC, RECT rcClient, COORD pos, U
 		return; // защита
 	}
 
-	COORD pix;
-	pix.X = pos.X * nFontWidth;
-	pix.Y = pos.Y * nFontHeight;
-
+	POINT pix = {pos.X * nFontWidth, pos.Y * nFontHeight};
 	if (pos.X && ConCharX[CurChar-1])
-		pix.X = ConCharX[CurChar-1];
+		pix.x = ConCharX[CurChar-1];
+
+	POINT pix2 = {pix.x + nFontWidth, pix.y + nFontHeight};
+	if (((pos.X+1) < (int)TextWidth) && ((CurChar+1) < (int)(TextWidth * TextHeight)) && ConCharX[CurChar])
+		pix2.x = ConCharX[CurChar];
+	else if (pix2.x > rcClient.right)
+		pix2.x = max(rcClient.right,pix2.x);
 
 	RECT rect;
 	bool bForeground = mp_ConEmu->isMeForeground();
@@ -4396,27 +4505,19 @@ void CVirtualConsole::UpdateCursorDraw(HDC hPaintDC, RECT rcClient, COORD pos, U
 	{
 		//bHollowBlock = true;
 		dwSize = 100; // percents
-		rect.left = pix.X; /*Cursor.x * nFontWidth;*/
-		rect.right = pix.X + nFontWidth; /*(Cursor.x+1) * nFontWidth;*/ //TODO: а ведь позиция следующего символа известна!
-		rect.bottom = (pos.Y+1) * nFontHeight;
-		rect.top = (pos.Y * nFontHeight) /*+ 1*/;
+		rect.left = pix.x;
+		rect.right = pix2.x;
+		rect.bottom = pix2.y;
+		rect.top = pix.y;
 	}
 	else if (curStyle == cur_Horz) // Horizontal
 	{
-		if (!gpSet->isMonospace)
-		{
-			rect.left = pix.X; /*Cursor.x * nFontWidth;*/
-			rect.right = pix.X + nFontWidth; /*(Cursor.x+1) * nFontWidth;*/ //TODO: а ведь позиция следующего символа известна!
-		}
-		else
-		{
-			rect.left = pos.X * nFontWidth;
-			rect.right = (pos.X+1) * nFontWidth;
-		}
+		rect.left = pix.x; /*Cursor.x * nFontWidth;*/
+		rect.right = pix2.x;
 
 		//rect.top = (Cursor.y+1) * nFontHeight - MulDiv(nFontHeight, cinf.dwSize, 100);
-		rect.bottom = (pos.Y+1) * nFontHeight;
-		rect.top = (pos.Y * nFontHeight) /*+ 1*/;
+		rect.bottom = pix2.y;
+		rect.top = pix.y;
 		//if (cinf.dwSize<50)
 		int nHeight = 0;
 
@@ -4441,24 +4542,10 @@ void CVirtualConsole::UpdateCursorDraw(HDC hPaintDC, RECT rcClient, COORD pos, U
 	{
 		_ASSERTE(curStyle == cur_Vert); // Validate type
 
-		if (!gpSet->isMonospace)
-		{
-			rect.left = pix.X; /*Cursor.x * nFontWidth;*/
-			//rect.right = rect.left/*Cursor.x * nFontWidth*/ //TODO: а ведь позиция следующего символа известна!
-			//  + klMax(1, MulDiv(nFontWidth, cinf.dwSize, 100)
-			//  + (cinf.dwSize > 10 ? 1 : 0));
-		}
-		else
-		{
-			rect.left = pos.X * nFontWidth;
-			//rect.right = Cursor.x * nFontWidth
-			//  + klMax(1, MulDiv(nFontWidth, cinf.dwSize, 100)
-			//  + (cinf.dwSize > 10 ? 1 : 0));
-		}
+		rect.left = pix.x;
 
 		rect.top = pos.Y * nFontHeight;
-		int nR = (!gpSet->isMonospace && ConCharX[CurChar]) // правая граница
-		         ? ConCharX[CurChar] : ((pos.X+1) * nFontWidth);
+		int nR = pix2.x;
 		//if (cinf.dwSize>=50)
 		//  rect.right = nR;
 		//else
@@ -4482,10 +4569,7 @@ void CVirtualConsole::UpdateCursorDraw(HDC hPaintDC, RECT rcClient, COORD pos, U
 		}
 
 		rect.right = min(nR, (rect.left+nWidth));
-		//rect.right = rect.left/*Cursor.x * nFontWidth*/ //TODO: а ведь позиция следующего символа известна!
-		//      + klMax(1, MulDiv(nFontWidth, cinf.dwSize, 100)
-		//      + (cinf.dwSize > 10 ? 1 : 0));
-		rect.bottom = (pos.Y+1) * nFontHeight;
+		rect.bottom = pix2.y;
 	}
 
 	rect.left += rcClient.left;

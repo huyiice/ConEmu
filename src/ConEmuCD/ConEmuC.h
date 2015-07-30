@@ -137,6 +137,7 @@ extern HANDLE  ghExitQueryEvent; // выставляется когда в ко�
 extern int nExitQueryPlace, nExitPlaceStep, nExitPlaceThread;
 extern HANDLE  ghQuitEvent;      // когда мы в процессе закрытия (юзер уже нажал кнопку "Press to close console")
 extern bool    gbQuit;           // когда мы в процессе закрытия (юзер уже нажал кнопку "Press to close console")
+extern bool    gbSkipHookersCheck;
 extern int     gnConfirmExitParm;
 extern BOOL    gbAlwaysConfirmExit, gbInShutdown, gbAutoDisableConfirmExit;
 extern int     gbRootWasFoundInCon;
@@ -331,7 +332,7 @@ void _printf(LPCSTR asFormat, DWORD dw1, DWORD dw2, LPCWSTR asAddLine=NULL);
 void print_error(DWORD dwErr = 0, LPCSTR asFormat = NULL);
 HWND Attach2Gui(DWORD nTimeout);
 
-CINFILTRATE_EXIT_CODES InjectRemote(DWORD nRemotePID, bool abDefTermOnly = false);
+CINFILTRATE_EXIT_CODES InjectRemote(DWORD nRemotePID, bool abDefTermOnly = false, LPDWORD pnErrCode = NULL);
 CINFILTRATE_EXIT_CODES InfiltrateDll(HANDLE hProcess, LPCWSTR dll);
 
 int ParseCommandLine(LPCWSTR asCmdLine /*, wchar_t** psNewCmd, BOOL* pbRunInBackgroundTab*/); // Разбор параметров командной строки

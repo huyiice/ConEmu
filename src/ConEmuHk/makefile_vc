@@ -56,6 +56,7 @@ $(INTDIR)\Common.obj \
 $(INTDIR)\ConEmuCheck.obj \
 $(INTDIR)\ConEmuHooks.obj \
 $(INTDIR)\ConsoleMixAttr.obj \
+$(INTDIR)\ConsoleRead.obj \
 $(INTDIR)\DefTermHk.obj \
 $(INTDIR)\Entry.obj \
 $(INTDIR)\Execute.obj \
@@ -75,7 +76,8 @@ $(INTDIR)\RegHooks.obj \
 $(INTDIR)\SetHook.obj \
 $(INTDIR)\ShellProcessor.obj \
 $(INTDIR)\WConsole.obj \
-$(INTDIR)\WObjects.obj
+$(INTDIR)\WObjects.obj \
+$(INTDIR)\WThreads.obj
 
 USERLIBS = 
 
@@ -298,6 +300,8 @@ $(INTDIR)\ConEmuHooks.obj: ConEmuHooks.cpp
 
 $(INTDIR)\ConsoleMixAttr.obj: ../common/ConsoleMixAttr.cpp ../common/ConsoleMixAttr.h
 
+$(INTDIR)\ConsoleRead.obj: ../common/ConsoleRead.cpp ../common/ConsoleRead.h
+
 $(INTDIR)\DefTermHk.obj: DefTermHk.cpp
 
 $(INTDIR)\Entry.obj: Entry.cpp ../common/PipeServer.h
@@ -339,6 +343,8 @@ $(INTDIR)\UserImp.obj: UserImp.cpp UserImp.h
 $(INTDIR)\WConsole.obj: ../common/WConsole.cpp ../common/WConsole.h
 
 $(INTDIR)\WObjects.obj: ../common/WObjects.cpp ../common/WObjects.h
+
+$(INTDIR)\WThreads.obj: ../common/WThreads.cpp ../common/WThreads.h
 
 #LINK_OBJS end
 ##############

@@ -61,7 +61,7 @@ void getWindowInfo(HWND ahWnd, wchar_t (&rsInfo)[1024], bool bProcessName /*= fa
 	}
 	else if (!IsWindow(ahWnd))
 	{
-		msprintf(rsInfo, countof(rsInfo), L"0x%08X: Invalid window handle", (DWORD)ahWnd);
+		msprintf(rsInfo, countof(rsInfo), L"0x%08X: Invalid window handle", LODWORD(ahWnd));
 	}
 	else
 	{
@@ -84,7 +84,7 @@ void getWindowInfo(HWND ahWnd, wchar_t (&rsInfo)[1024], bool bProcessName /*= fa
 			}
 		}
 
-		msprintf(rsInfo, countof(rsInfo), L"0x%08X: %s - '%s'%s", (DWORD)ahWnd, szClass, szTitle, szProc);
+		msprintf(rsInfo, countof(rsInfo), L"0x%08X: %s - '%s'%s", LODWORD(ahWnd), szClass, szTitle, szProc);
 	}
 
 	if (pnPID)
@@ -716,6 +716,14 @@ bool IsVsNetHostExe(LPCWSTR asFilePatName)
 		bVsNetHostRequested = true;
 	}
 	return bVsNetHostRequested;
+}
+
+bool IsGDB(LPCWSTR asFilePatName)
+{
+	// "gdb.exe"
+	LPCWSTR pszName = PointToName(asFilePatName);
+	bool bIsGdb = pszName ? (lstrcmpi(pszName, L"gdb.exe") == 0) : false;
+	return bIsGdb;
 }
 
 // Check running process bits - 32/64
@@ -1383,7 +1391,7 @@ UINT GetCpFromString(LPCWSTR asString, LPCWSTR* ppszEnd /*= NULL*/)
 			// После имени могут быть разделители (знаки пунктуации)
 			if (asString[iLen] == 0 || (asString[iLen] && wcschr(L",.:; \t\r\n", asString[iLen])))
 			{
-				nCP = p->nCP;
+				nCP = LODWORD(p->nCP);
 				pszEnd = (wchar_t*)asString+iLen;
 				// CP_ACP is 0, so jump to wrap instead of break
 				goto wrap;

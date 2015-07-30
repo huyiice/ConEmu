@@ -1,6 +1,6 @@
 ﻿
 /*
-Copyright (c) 2011-2014 Maximus5
+Copyright (c) 2011-2015 Maximus5
 All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
@@ -29,7 +29,7 @@ THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #pragma once
 
 #define DOWNLOADER_IMPORTS
-#include "../ConEmuCD/Downloader.h"
+#include "../ConEmuCD/DownloaderCall.h"
 
 #define UPD_PROGRESS_CONFIRM_DOWNLOAD  5
 #define UPD_PROGRESS_DOWNLOAD_START   10
@@ -46,6 +46,7 @@ THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 struct ConEmuUpdateSettings;
 class CConEmuUpdate;
 class MSection;
+struct MSectionSimple;
 
 extern CConEmuUpdate* gpUpd;
 
@@ -81,7 +82,11 @@ protected:
 	ConEmuUpdateSettings* mp_Set;
 
 	long mn_InShowMsgBox;
-	LPCWSTR ms_LastErrorInfo; // Informational
+	long mn_ErrorInfoCount;
+	long mn_ErrorInfoSkipCount;
+
+	MSectionSimple* mps_ErrorLock;
+	wchar_t* ms_LastErrorInfo;
 
 	wchar_t* mpsz_DeleteIniFile;
 	wchar_t* mpsz_DeletePackageFile;
@@ -90,6 +95,11 @@ protected:
 
 	wchar_t* mpsz_PendingPackageFile;
 	wchar_t* mpsz_PendingBatchFile;
+
+	CEStr ms_TempUpdateVerLocation;
+
+	CEStr ms_TemplFilename;
+	CEStr ms_SourceFull;
 
 	static DWORD WINAPI CheckThreadProc(LPVOID lpParameter);
 	DWORD CheckProcInt();
@@ -103,12 +113,12 @@ protected:
 
 	bool bNeedRunElevation;
 
-	BOOL DownloadFile(LPCWSTR asSource, LPCWSTR asTarget, HANDLE hDstFile, DWORD& crc, BOOL abPackage = FALSE);
+	BOOL DownloadFile(LPCWSTR asSource, LPCWSTR asTarget, DWORD& crc, BOOL abPackage = FALSE, LARGE_INTEGER* rpSize = NULL);
 
 	void ReportError(LPCWSTR asFormat, DWORD nErrCode);
 	void ReportError(LPCWSTR asFormat, LPCWSTR asArg, DWORD nErrCode);
 	void ReportError(LPCWSTR asFormat, LPCWSTR asArg1, LPCWSTR asArg2, DWORD nErrCode);
-	void ReportBrokenIni(LPCWSTR asSection, LPCWSTR asName, LPCWSTR asIni);
+	void ReportBrokenIni(LPCWSTR asSection, LPCWSTR asName, LPCWSTR asIniUrl, LPCWSTR asIniLocal);
 
 	void ReportErrorInt(wchar_t* asErrorInfo);
 
@@ -152,15 +162,18 @@ protected:
 	wchar_t* mpsz_ConfirmSource;
 	static LRESULT QueryConfirmationCallback(LPARAM lParam);
 	static LRESULT RequestExitUpdate(LPARAM);
-	static LRESULT ShowLastError(LPARAM apErrText);
+	static LRESULT ShowLastError(LPARAM apObj);
 	int QueryConfirmation(UpdateStep step);
 	int QueryConfirmationDownload();
 	int QueryConfirmationUpdate();
 	int QueryConfirmationNoNewVer();
+	static LRESULT QueryRetryVersionCheck(LPARAM lParam);
 	void WaitAllInstances();
 	bool Check7zipInstalled();
 	#if 0
 	bool CanUpdateInstallation();
 	#endif
 	bool StartLocalUpdate(LPCWSTR asDownloadedPackage);
+	bool LoadVersionInfoFromServer();
+	bool LoadPackageFromServer();
 };

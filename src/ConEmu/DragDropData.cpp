@@ -1,6 +1,6 @@
 ﻿
 /*
-Copyright (c) 2009-2013 Maximus5
+Copyright (c) 2009-2015 Maximus5
 All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
@@ -48,6 +48,8 @@ THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "Update.h"
 #include "VConGroup.h"
 #include "VirtualConsole.h"
+
+#include "../common/WThreads.h"
 
 
 #ifdef __GNUC__
@@ -2953,7 +2955,7 @@ LRESULT CDragDropData::DragProc(HWND hWnd, UINT messg, WPARAM wParam, LPARAM lPa
 			MoveWindowRect(hWnd, rcWnd);
 			pds->bInDrag = TRUE;
 			pds->pDrag->mb_DragStarting = TRUE;
-			wchar_t szStep[255]; _wsprintf(szStep, SKIPLEN(countof(szStep)) L"DoDragDrop.Thread(Eff=0x%X, DataObject=0x%08X, DropSource=0x%08X)", dwAllowedEffects, (DWORD)pds->pDrag->mp_DataObject, (DWORD)pDropSource); //-V205
+			wchar_t szStep[255]; _wsprintf(szStep, SKIPLEN(countof(szStep)) L"DoDragDrop.Thread(Eff=0x%X, DataObject=0x%08X, DropSource=0x%08X)", dwAllowedEffects, LODWORD(pds->pDrag->mp_DataObject), LODWORD(pDropSource));
 			gpConEmu->DebugStep(szStep);
 			dwResult = DoDragDrop(pds->pDrag->mp_DataObject, pDropSource, dwAllowedEffects, &dwEffect);
 			_wsprintf(szStep, SKIPLEN(countof(szStep)) L"DoDragDrop finished, Code=0x%08X", dwResult);
@@ -3049,7 +3051,7 @@ CDragDropData::CEDragSource* CDragDropData::InitialCreateSource()
 	CEDragSource *pds = (CEDragSource*)calloc(sizeof(CEDragSource),1);
 	pds->hReady = CreateEvent(0,TRUE,FALSE,0);
 	pds->pDrag = this;
-	pds->hThread = CreateThread(0,0,DragThread,pds,0,&(pds->nTID));
+	pds->hThread = apiCreateThread(DragThread, pds, &(pds->nTID), "CDragDropData::DragThread");
 
 	if (pds->hThread == NULL)
 	{
@@ -3132,7 +3134,7 @@ void CDragDropData::TerminateDrag()
 		{
 			if (WaitForSingleObject(pds->hThread,100)!=WAIT_OBJECT_0)
 			{
-				TerminateThread(pds->hThread, 100);
+				apiTerminateThread(pds->hThread, 100);
 			}
 
 			CloseHandle(pds->hThread);

@@ -717,19 +717,30 @@ void CheckOptionsFast(LPCWSTR asTitle, SettingsLoadedFlags slfFlags)
 /*         Creating default tasks           */
 /* **************************************** */
 
-static bool sbAppendMode = false;
+static SettingsLoadedFlags sAppendMode = slf_None;
 
 static void CreateDefaultTask(LPCWSTR asName, LPCWSTR asGuiArg, LPCWSTR asCommands)
 {
+	_ASSERTE(asName && asName[0] && asName[0] != TaskBracketLeft && asName[wcslen(asName)-1] != TaskBracketRight);
+	wchar_t szLeft[2] = {TaskBracketLeft}, szRight[2] = {TaskBracketRight};
+	CEStr lsName = lstrmerge(szLeft, asName, szRight);
+
 	// Don't add duplicates in the append mode
-	if (sbAppendMode)
+	if ((sAppendMode & slf_AppendTasks))
 	{
-		const CommandTasks* pTask = gpSet->CmdTaskGetByName(asName);
+		CommandTasks* pTask = (CommandTasks*)gpSet->CmdTaskGetByName(lsName);
 		if (pTask != NULL)
+		{
+			if ((sAppendMode & slf_RewriteExisting))
+			{
+				pTask->SetGuiArg(asGuiArg);
+				pTask->SetCommands(asCommands);
+			}
 			return;
+		}
 	}
 
-	gpSet->CmdTaskSet(iCreatIdx++, asName, asGuiArg, asCommands);
+	gpSet->CmdTaskSet(iCreatIdx++, lsName, asGuiArg, asCommands);
 }
 
 // Search on asFirstDrive and all (other) fixed drive letters
@@ -1037,6 +1048,7 @@ public:
 		VS_FIXEDFILEINFO Ver; // bool LoadAppVersion(LPCWSTR FarPath, VS_FIXEDFILEINFO& Version, wchar_t (&ErrText)[512])
 		DWORD dwSubsystem, dwBits;
 		FarVersion FarVer; // ConvertVersionToFarVersion
+		int  iStep;
 		bool bNeedQuot;
 		void Free()
 		{
@@ -1157,6 +1169,30 @@ public:
 		return this;
 	}
 
+	bool CheckUnique(LPCWSTR pszTaskBaseName)
+	{
+		bool bUnique = true;
+
+		for (INT_PTR i = 0; i < Installed.size(); i++)
+		{
+			const AppInfo& FI = Installed[i];
+			if (pszTaskBaseName && (lstrcmpi(pszTaskBaseName, FI.szTaskBaseName) != 0))
+				continue;
+			for (INT_PTR j = Installed.size() - 1; j > i; j--)
+			{
+				const AppInfo& FJ = Installed[j];
+				if (pszTaskBaseName && (lstrcmpi(pszTaskBaseName, FJ.szTaskBaseName) != 0))
+					continue;
+				if (lstrcmpi(FI.szTaskName, FJ.szTaskName) == 0)
+				{
+					bUnique = false; break;
+				}
+			}
+		}
+
+		return bUnique;
+	}
+
 	virtual void MakeUnique()
 	{
 		if (Installed.size() <= 0)
@@ -1168,6 +1204,9 @@ public:
 		struct impl {
 			static int SortRoutine(AppInfo &e1, AppInfo &e2)
 			{
+				int iNameCmp = lstrcmpi(e1.szTaskBaseName, e2.szTaskBaseName);
+				if (iNameCmp)
+					return (iNameCmp < 0) ? -1 : 1;
 				if (e1.Ver.dwFileVersionMS < e2.Ver.dwFileVersionMS)
 					return 1;
 				if (e1.Ver.dwFileVersionMS > e2.Ver.dwFileVersionMS)
@@ -1185,60 +1224,88 @@ public:
 		};
 		Installed.sort(impl::SortRoutine);
 
-		// All task names MUST be unique
-		for (int u = 0; u <= 3; u++)
+		// To know if the task was already processed by task-base-name
+		for (INT_PTR i = 0; i < Installed.size(); i++)
 		{
-			bool bUnique = true;
+			Installed[i].iStep = 0;
+		}
 
+		// All task names MUST be unique
+		for (int u = 1; u <= 3; u++)
+		{
+			// Firstly check if all task names are already unique
+			if (CheckUnique(NULL))
+			{
+				break; // Done, all task names are unique already
+			}
+
+			// Now we have to modify task-name by adding some unique suffix to the task-base-name
 			for (INT_PTR i = 0; i < Installed.size(); i++)
 			{
-				AppInfo& FI = Installed[i];
-				wchar_t szPlatform[6]; wcscpy_c(szPlatform, (FI.dwBits == 64) ? L" x64" : (FI.dwBits == 32) ? L" x86" : L"");
+				const AppInfo& FI = Installed[i];
+				if (FI.iStep == u)
+					continue; // Already processed
 
-				switch (u)
+				// Do we need to make this task-base-name unique?
+				if (CheckUnique(FI.szTaskBaseName))
 				{
-				case 0: // Try as is
-					break;
-
-				case 1: // Naked, only add platform
-					_wsprintf(FI.szTaskName, SKIPLEN(countof(FI.szTaskName)-16) L"%s%s",
-						FI.szTaskBaseName, szPlatform);
-					break;
-
-				case 2: // Add App version and platform
-					if (FI.Ver.dwFileVersionMS)
-						_wsprintf(FI.szTaskName, SKIPLEN(countof(FI.szTaskName)-16) L"%s %u.%u%s",
-							FI.szTaskBaseName, HIWORD(FI.Ver.dwFileVersionMS), LOWORD(FI.Ver.dwFileVersionMS), szPlatform);
-					else
-						_wsprintf(FI.szTaskName, SKIPLEN(countof(FI.szTaskName)-16) L"%s%s",
-							FI.szTaskBaseName, szPlatform);
-					break;
-
-				case 3: // Add App version, platform and index
-					if (FI.Ver.dwFileVersionMS)
-						_wsprintf(FI.szTaskName, SKIPLEN(countof(FI.szTaskName)-16) L"%s %u.%u%s (%u)",
-							FI.szTaskBaseName, HIWORD(FI.Ver.dwFileVersionMS), LOWORD(FI.Ver.dwFileVersionMS), szPlatform, ++idx);
-					else
-						_wsprintf(FI.szTaskName, SKIPLEN(countof(FI.szTaskName)-16) L"%s%s (%u)",
-							FI.szTaskBaseName, szPlatform, ++idx);
-					break;
-				}
-
-				for (INT_PTR j = 0; j < i; j++)
-				{
-					if (lstrcmpi(FI.szTaskName, Installed[j].szTaskName) == 0)
+					for (INT_PTR j = Installed.size() - 1; j >= i; j--)
 					{
-						bUnique = false; break;
+						AppInfo& FJ = Installed[j];
+						if (lstrcmpi(FI.szTaskBaseName, FJ.szTaskBaseName) != 0)
+							continue;
+						FJ.iStep = u;
 					}
+					continue; // Don't
 				}
 
-				if (!bUnique)
+				bool bMatch = false;
+
+				for (INT_PTR j = i; j < Installed.size(); j++)
 				{
-					break; // Try next step
+					AppInfo& FJ = Installed[j];
+					if (FJ.iStep == u)
+						continue; // Already processed
+
+					// Check only tasks with the same base names
+					if (lstrcmpi(FI.szTaskBaseName, FJ.szTaskBaseName) != 0)
+						continue;
+					bMatch = true;
+
+					wchar_t szPlatform[6]; wcscpy_c(szPlatform, (FJ.dwBits == 64) ? L" x64" : (FJ.dwBits == 32) ? L" x86" : L"");
+
+					switch (u)
+					{
+					case 1: // Naked, only add platform
+						_wsprintf(FJ.szTaskName, SKIPLEN(countof(FJ.szTaskName)-16) L"%s%s",
+							FJ.szTaskBaseName, szPlatform);
+						break;
+
+					case 2: // Add App version and platform
+						if (FJ.Ver.dwFileVersionMS)
+							_wsprintf(FJ.szTaskName, SKIPLEN(countof(FJ.szTaskName)-16) L"%s %u.%u%s",
+								FJ.szTaskBaseName, HIWORD(FJ.Ver.dwFileVersionMS), LOWORD(FJ.Ver.dwFileVersionMS), szPlatform);
+						else // If there was not VersionInfo in the exe file (same as u==1)
+							_wsprintf(FJ.szTaskName, SKIPLEN(countof(FJ.szTaskName)-16) L"%s%s",
+								FJ.szTaskBaseName, szPlatform);
+						break;
+
+					case 3: // Add App version, platform and index
+						if (FJ.Ver.dwFileVersionMS)
+							_wsprintf(FJ.szTaskName, SKIPLEN(countof(FJ.szTaskName)-16) L"%s %u.%u%s (%u)",
+								FJ.szTaskBaseName, HIWORD(FJ.Ver.dwFileVersionMS), LOWORD(FJ.Ver.dwFileVersionMS), szPlatform, ++idx);
+						else // If there was not VersionInfo in the exe file
+							_wsprintf(FJ.szTaskName, SKIPLEN(countof(FI.szTaskName)-16) L"%s%s (%u)",
+								FI.szTaskBaseName, szPlatform, ++idx);
+						break;
+					}
+
+					// To know the task was processed
+					FJ.iStep = u;
 				}
 			}
 
-			if (bUnique)
+			if (CheckUnique(NULL))
 			{
 				break; // Done, all task names are unique
 			}
@@ -1282,11 +1349,11 @@ public:
 						while (wcsncmp(pszTail, L"..\\", 3) == 0)
 						{
 							ptrAdd = wcsrchr(szPath.ms_Arg, L'\\');
-							if (ptrAdd)
-							{
-								*ptrAdd = 0;
-								pszTail += 3;
-							}
+							if (!ptrAdd)
+								break;
+							// szPath is a local copy, safe to change it
+							*ptrAdd = 0;
+							pszTail += 3;
 						}
 
 						CEStr szTemp(JoinPath(szPath, pszTail));
@@ -1601,10 +1668,10 @@ void CreateDefaultTasks(SettingsLoadedFlags slfFlags)
 {
 	iCreatIdx = 0;
 
-	sbAppendMode = ((slfFlags & slf_AppendTasks) == slf_AppendTasks);
+	sAppendMode = slfFlags;
 	gn_FirstFarTask = -1;
 
-	if (!sbAppendMode)
+	if (!(slfFlags & slf_AppendTasks))
 	{
 		const CommandTasks* pExist = gpSet->CmdTaskGet(iCreatIdx);
 		if (pExist != NULL)
@@ -1686,12 +1753,16 @@ void CreateDefaultTasks(SettingsLoadedFlags slfFlags)
 
 	// From Git-for-Windows (aka msysGit v2)
 	App.Add(L"Bash::Git bash",
-		L" --login -i -new_console:C:\"" FOUND_APP_PATH_STR L"\\..\\..\\mingw32\\share\\git\\git-for-windows.ico\"", NULL, NULL,
-		L"[SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Git_is1:InstallLocation]\\usr\\bin\\sh.exe",
-		L"%ProgramFiles%\\Git\\usr\\bin\\sh.exe", L"%ProgramW6432%\\Git\\usr\\bin\\sh.exe",
+		L" --no-cd --command=usr/bin/bash.exe -l -i", NULL, NULL,
+		L"[SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Git_is1:InstallLocation]\\git-cmd.exe",
+		L"%ProgramFiles%\\Git\\git-cmd.exe", L"%ProgramW6432%\\Git\\git-cmd.exe",
 		#ifdef _WIN64
-		L"%ProgramFiles(x86)%\\Git\\usr\\bin\\sh.exe",
+		L"%ProgramFiles(x86)%\\Git\\git-cmd.exe",
 		#endif
+		NULL);
+	App.Add(L"Bash::GitSDK bash",
+		L" --no-cd --command=usr/bin/bash.exe -l -i", NULL, NULL,
+		L"\\GitSDK\\git-cmd.exe",
 		NULL);
 	// From msysGit
 	App.Add(L"Bash::Git bash",

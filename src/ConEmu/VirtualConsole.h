@@ -37,6 +37,7 @@ THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "RealConsole.h"
 #include "VConChild.h"
 #include "CustomFonts.h"
+#include "SetColorPalette.h"
 
 #define MAX_COUNT_PART_BRUSHES 16*16*4
 #define MAX_SPACES 0x400
@@ -72,6 +73,7 @@ class CVirtualConsole :
 	protected:
 		VConFlags      mn_Flags;
 		int            mn_Index; // !!! Debug, Informational !!!
+		int            mn_ID;    // !!! Debug, Unique per session id of VCon !!!
 		bool SetFlags(VConFlags Set, VConFlags Mask, int index = -1);
 
 	protected:
@@ -92,6 +94,7 @@ class CVirtualConsole :
 		bool isGroup();
 		bool isGroupedInput();
 		int  Index() { return mn_Index; };
+		int  ID() { return mn_ID; };
 	public:
 		WARNING("Сделать protected!");
 		uint TextWidth, TextHeight; // размер в символах
@@ -285,6 +288,11 @@ class CVirtualConsole :
 		bool isEditor, isViewer, isFilePanel, isFade, isForeground;
 		BYTE attrBackLast;
 		COLORREF *mp_Colors;
+
+		// In some cases (Win+G attach of external console)
+		// we use original RealConsole palette instead of ConEmu's default one
+		ColorPalette m_SelfPalette;
+		void SetSelfPalette(WORD wAttributes, WORD wPopupAttributes, const COLORREF (&ColorTable)[16]);
 
 		//wchar_t *Spaces; WORD nSpaceCount;
 		static wchar_t ms_Spaces[MAX_SPACES], ms_HorzDbl[MAX_SPACES], ms_HorzSingl[MAX_SPACES];

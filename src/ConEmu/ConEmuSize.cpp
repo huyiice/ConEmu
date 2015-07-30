@@ -245,7 +245,7 @@ RECT CConEmuSize::CalcMargins(DWORD/*enum ConEmuMargins*/ mg, ConEmuWindowMode w
 			// Главное окно уже создано, наличие таба определено
 			if (lbTabActive)  //TODO: + IsAllowed()?
 			{
-				RECT rcTab = mp_ConEmu->mp_TabBar->GetMargins();
+				RECT rcTab = mp_ConEmu->mp_TabBar->GetMargins(true);
 				// !!! AddMargins использовать нельзя! он расчитан на вычитание
 				//AddMargins(rc, rcTab, FALSE);
 				_ASSERTE(rcTab.top==0 || rcTab.bottom==0);
@@ -712,32 +712,16 @@ RECT CConEmuSize::CalcRect(enum ConEmuRect tWhat, const RECT &rFrom, enum ConEmu
 						rc.bottom += rcFrame.bottom;
 
 						// Issue 828: When taskbar is auto-hidden
-						APPBARDATA state = {sizeof(state)}; RECT rcTaskbar, rcMatch;
-						while ((state.hWnd = FindWindowEx(NULL, state.hWnd, L"Shell_TrayWnd", NULL)) != NULL)
+						UINT uEdge = (UINT)-1;
+						// Is task-bar found on current monitor?
+						if (IsTaskbarAutoHidden(&mi.rcMonitor, &uEdge))
 						{
-							if (GetWindowRect(state.hWnd, &rcTaskbar)
-								&& IntersectRect(&rcMatch, &rcTaskbar, &mi.rcMonitor))
+							switch (uEdge)
 							{
-								break; // OK, taskbar match monitor
-							}
-						}
-						// Ok, Is task-bar found on current monitor?
-						if (state.hWnd)
-						{
-							LRESULT lState = SHAppBarMessage(ABM_GETSTATE, &state);
-							if (lState & ABS_AUTOHIDE)
-							{
-								APPBARDATA pos = {sizeof(pos), state.hWnd};
-								if (SHAppBarMessage(ABM_GETTASKBARPOS, &pos))
-								{
-									switch (pos.uEdge)
-									{
-										case ABE_LEFT:   rc.left   += 1; break;
-										case ABE_RIGHT:  rc.right  -= 1; break;
-										case ABE_TOP:    rc.top    += 1; break;
-										case ABE_BOTTOM: rc.bottom -= 1; break;
-									}
-								}
+								case ABE_LEFT:   rc.left   += 1; break;
+								case ABE_RIGHT:  rc.right  -= 1; break;
+								case ABE_TOP:    rc.top    += 1; break;
+								case ABE_BOTTOM: rc.bottom -= 1; break;
 							}
 						}
 
@@ -1610,12 +1594,22 @@ void CConEmuSize::AutoSizeFont(RECT arFrom, enum ConEmuRect tFrom)
 
 void CConEmuSize::UpdateIdealRect(RECT rcNewIdeal)
 {
-#ifdef _DEBUG
-	RECT rc = rcNewIdeal;
+	DEBUGTEST(RECT rc = rcNewIdeal);
 	_ASSERTE(rc.right>rc.left && rc.bottom>rc.top);
-	if (memcmp(&mr_Ideal.rcIdeal, &rc, sizeof(rc)) == 0)
+
+	if (memcmp(&mr_Ideal.rcIdeal, &rcNewIdeal, sizeof(rcNewIdeal)) != 0)
+	{
+		wchar_t szLog[120];
+		_wsprintf(szLog, SKIPCOUNT(szLog) L"UpdateIdealRect Cur={%i,%i}-{%i,%i} New={%i,%i}-{%i,%i}",
+			LOGRECTCOORDS(mr_Ideal.rcIdeal), LOGRECTCOORDS(rcNewIdeal));
+		LogString(szLog);
+	}
+	#ifdef _DEBUG
+	else
+	{
 		return;
-#endif
+	}
+	#endif
 
 	mr_Ideal.rcIdeal = rcNewIdeal;
 }
@@ -1794,11 +1788,18 @@ void CConEmuSize::StoreNormalRect(RECT* prcWnd)
 		// восстановлении окна получаем глюк позиционирования - оно прыгает заголовком за пределы.
 		if (!isSizing())
 		{
-			#ifdef _DEBUG
-			int iDbg = 0; if (memcmp(&mrc_StoredNormalRect, &rcNormal, sizeof(rcNormal)) != 0)
-				iDbg = 1;
-			#endif
+			if (memcmp(&mrc_StoredNormalRect, &rcNormal, sizeof(rcNormal)) != 0)
+			{
+				wchar_t szLog[120];
+				_wsprintf(szLog, SKIPCOUNT(szLog) L"UpdateNormalRect Cur={%i,%i}-{%i,%i} New={%i,%i}-{%i,%i}",
+					LOGRECTCOORDS(mrc_StoredNormalRect), LOGRECTCOORDS(rcNormal));
+				LogString(szLog);
+			}
 			mrc_StoredNormalRect = rcNormal;
+		}
+		else
+		{
+			LogString(L"StoreNormalRect skipped due to `isSizing()`, continue to UpdateSize");
 		}
 
 		{
@@ -1975,9 +1976,7 @@ HMONITOR CConEmuSize::GetPrimaryMonitor(MONITORINFO* pmi /*= NULL*/)
 	{
 		wchar_t szInfo[128];
 		_wsprintf(szInfo, SKIPLEN(countof(szInfo)) L"  GetPrimaryMonitor=%u -> hMon=x%08X Work=({%i,%i}-{%i,%i}) Area=({%i,%i}-{%i,%i})",
-			(hMon!=NULL), (DWORD)hMon,
-			mi.rcWork.left, mi.rcWork.top, mi.rcWork.right, mi.rcWork.bottom,
-			mi.rcMonitor.left, mi.rcMonitor.top, mi.rcMonitor.right, mi.rcMonitor.bottom);
+			(hMon!=NULL), LODWORD(hMon), LOGRECTCOORDS(mi.rcWork), LOGRECTCOORDS(mi.rcMonitor));
 		LogString(szInfo);
 	}
 
@@ -2002,7 +2001,7 @@ LRESULT CConEmuSize::OnGetMinMaxInfo(LPMINMAXINFO pInfo)
 	          pInfo->ptMaxPosition.x, pInfo->ptMaxPosition.y,
 	          pInfo->ptMinTrackSize.x, pInfo->ptMinTrackSize.y,
 	          pInfo->ptMaxTrackSize.x, pInfo->ptMaxTrackSize.y,
-			  rcWnd.left, rcWnd.top, rcWnd.right, rcWnd.bottom);
+			  LOGRECTCOORDS(rcWnd));
 		if (gpSetCls->isAdvLogging >= 2)
 			LogString(szMinMax, true, false);
 		DEBUGSTRSIZE(szMinMax);
@@ -2106,7 +2105,7 @@ LRESULT CConEmuSize::OnGetMinMaxInfo(LPMINMAXINFO pInfo)
 	          pInfo->ptMaxPosition.x, pInfo->ptMaxPosition.y,
 	          pInfo->ptMinTrackSize.x, pInfo->ptMinTrackSize.y,
 	          pInfo->ptMaxTrackSize.x, pInfo->ptMaxTrackSize.y,
-			  rcWnd.left, rcWnd.top, rcWnd.right, rcWnd.bottom);
+			  LOGRECTCOORDS(rcWnd));
 		if (gpSetCls->isAdvLogging >= 2)
 			LogString(szMinMax, true, false);
 		DEBUGSTRSIZE(szMinMax);
@@ -2181,7 +2180,11 @@ LRESULT CConEmuSize::OnWindowPosChanged(HWND hWnd, UINT uMsg, WPARAM wParam, LPA
 		gpSet->isAlwaysOnTop = false;
 	}
 
-	GetTileMode(true);
+	if (!IsWindowModeChanging())
+	{
+		GetTileMode(true);
+	}
+
 
 	#ifdef _DEBUG
 	if (isFullScreen() && !isZoomed())
@@ -2455,7 +2458,8 @@ LRESULT CConEmuSize::OnWindowPosChanging(HWND hWnd, UINT uMsg, WPARAM wParam, LP
 					p->cx = rc.right - rc.left; // + 1;
 				}
 
-				wndX = p->x;
+				if (wndX != p->x)
+					wndX = p->x;
 
 				RECT rcFixup = {p->x, p->y, p->x + p->cx, p->y + p->cy};
 				if (CheckQuakeRect(&rcFixup))
@@ -2729,7 +2733,9 @@ LRESULT CConEmuSize::OnSize(bool bResizeRCon/*=true*/, WPARAM wParam/*=0*/, WORD
 	}
 
 	if (mp_ConEmu->mp_TabBar->IsTabsActive())
+	{
 		mp_ConEmu->mp_TabBar->Reposition();
+	}
 
 	// Background - должен занять все клиентское место под тулбаром
 	// Там же ресайзится ScrollBar
@@ -3451,7 +3457,7 @@ void CConEmuSize::LogTileModeChange(LPCWSTR asPrefix, ConEmuWindowCommand Tile, 
 	if (prcAfter)
 		_wsprintf(szAfter, SKIPLEN(countof(szAfter)) L" -> %s {%i,%i}-{%i,%i}",
 			FormatTileMode(NewTile,szNewTile,countof(szNewTile)),
-			prcAfter->left, prcAfter->top, prcAfter->right, prcAfter->bottom
+			LOGRECTCOORDS(*prcAfter)
 			);
 	else
 		szAfter[0] = 0;
@@ -3460,7 +3466,7 @@ void CConEmuSize::LogTileModeChange(LPCWSTR asPrefix, ConEmuWindowCommand Tile, 
 		asPrefix,
 		FormatTileMode(Tile,szName,countof(szName)),
 		(UINT)bChanged,
-		rcSet.left, rcSet.top, rcSet.right, rcSet.bottom,
+		LOGRECTCOORDS(rcSet),
 		(DWORD)(DWORD_PTR)hMon,
 		szAfter);
 
@@ -3479,38 +3485,74 @@ ConEmuWindowCommand CConEmuSize::EvalTileMode(const RECT& rcWnd, MONITORINFO* pm
 	if (pmi)
 		*pmi = mi;
 
+	// Is auto-hidden task-bar found on current monitor?
+	UINT uEdge = (UINT)-1;
+	bool bAutoHidden = IsTaskbarAutoHidden(&mi.rcMonitor, &uEdge);
+	// Than we shall take it into account
+	RECT rcAlt = mi.rcWork;
+	if (bAutoHidden)
+	{
+		switch (uEdge)
+		{
+			case ABE_LEFT:   rcAlt.left   += 1; break;
+			case ABE_RIGHT:  rcAlt.right  -= 1; break;
+			case ABE_TOP:    rcAlt.top    += 1; break;
+			case ABE_BOTTOM: rcAlt.bottom -= 1; break;
+		}
+	}
+
+	_ASSERTE(IsWindowModeChanging() == false);
+
+	// If the window covers whole working area,
+	// that is not a "tile" mode, but sort of "Maximized"
+	if (((rcWnd.left == mi.rcWork.left) || (rcWnd.left == rcAlt.left))
+		&& ((rcWnd.right == mi.rcWork.right) || (rcWnd.right == rcAlt.right))
+		&& ((rcWnd.top == mi.rcWork.top) || (rcWnd.top == rcAlt.top))
+		&& ((rcWnd.bottom == mi.rcWork.bottom) || (rcWnd.bottom == rcAlt.bottom)))
+	{
+		goto wrap;
+	}
+
 	// _abs(x1-x2) <= 1 ?
-	if ((rcWnd.right == mi.rcWork.right)
-		&& (rcWnd.top == mi.rcWork.top)
-		&& (rcWnd.bottom == mi.rcWork.bottom))
+	if (((rcWnd.right == mi.rcWork.right) || (rcWnd.right == rcAlt.right))
+		&& ((rcWnd.top == mi.rcWork.top) || (rcWnd.top == rcAlt.top))
+		&& ((rcWnd.bottom == mi.rcWork.bottom) || (rcWnd.bottom == rcAlt.bottom)))
 	{
 		int nCenter = ((mi.rcWork.right + mi.rcWork.left) >> 1) - rcWnd.left;
 		if (_abs(nCenter) <= 4)
 		{
 			CurTile = cwc_TileRight;
+			goto wrap;
 		}
 	}
-	else if ((rcWnd.left == mi.rcWork.left)
-		&& (rcWnd.top == mi.rcWork.top)
-		&& (rcWnd.bottom == mi.rcWork.bottom))
+
+	if (((rcWnd.left == mi.rcWork.left) || (rcWnd.left == rcAlt.left))
+		&& ((rcWnd.top == mi.rcWork.top) || (rcWnd.top == rcAlt.top))
+		&& ((rcWnd.bottom == mi.rcWork.bottom) || (rcWnd.bottom == rcAlt.bottom)))
 	{
 		int nCenter = ((mi.rcWork.right + mi.rcWork.left) >> 1) - rcWnd.right;
 		if (_abs(nCenter) <= 4)
 		{
 			CurTile = cwc_TileLeft;
+			goto wrap;
 		}
 	}
-	else if ((rcWnd.top == mi.rcWork.top)
-		&& (rcWnd.bottom == mi.rcWork.bottom))
+
+	if (((rcWnd.top == mi.rcWork.top) || (rcWnd.top == rcAlt.top))
+		&& ((rcWnd.bottom == mi.rcWork.bottom) || (rcWnd.bottom == rcAlt.bottom)))
 	{
 		CurTile = cwc_TileHeight;
-	}
-	else if ((rcWnd.left == mi.rcWork.left)
-		&& (rcWnd.right == mi.rcWork.right))
-	{
-		CurTile = cwc_TileWidth;
+		goto wrap;
 	}
 
+	if (((rcWnd.left == mi.rcWork.left) || (rcWnd.left == rcAlt.left))
+		&& ((rcWnd.right == mi.rcWork.right) || (rcWnd.right == rcAlt.right)))
+	{
+		CurTile = cwc_TileWidth;
+		goto wrap;
+	}
+
+wrap:
 	return CurTile;
 }
 
@@ -3635,7 +3677,7 @@ bool CConEmuSize::JumpNextMonitor(bool Next)
 		{
 			_wsprintf(szInfo, SKIPLEN(countof(szInfo))
 				L"JumpNextMonitor skipped, not our window PID=%u, HWND=x%08X",
-				nWndPID, (DWORD)hJump);
+				nWndPID, LODWORD(hJump));
 			LogString(szInfo);
 		}
 		return false;
@@ -3751,7 +3793,7 @@ bool CConEmuSize::JumpNextMonitor(HWND hJumpWnd, HMONITOR hJumpMon, bool Next, c
 		{
 			_wsprintf(szInfo, SKIPLEN(countof(szInfo))
 				L"JumpNextMonitor(%i) skipped, GetNextMonitorInfo({%i,%i}-{%i,%i}) returns NULL",
-				(int)Next, rcMain.left, rcMain.top, rcMain.right, rcMain.bottom);
+				(int)Next, LOGRECTCOORDS(rcMain));
 			LogString(szInfo);
 		}
 		return false;
@@ -3760,8 +3802,8 @@ bool CConEmuSize::JumpNextMonitor(HWND hJumpWnd, HMONITOR hJumpMon, bool Next, c
 	{
 		_wsprintf(szInfo, SKIPLEN(countof(szInfo))
 			L"JumpNextMonitor(%i), GetNextMonitorInfo({%i,%i}-{%i,%i}) returns 0x%08X ({%i,%i}-{%i,%i})",
-			(int)Next, rcMain.left, rcMain.top, rcMain.right, rcMain.bottom,
-			(DWORD)(DWORD_PTR)hNext, mi.rcMonitor.left, mi.rcMonitor.top, mi.rcMonitor.right, mi.rcMonitor.bottom);
+			(int)Next, LOGRECTCOORDS(rcMain),
+			(DWORD)(DWORD_PTR)hNext, LOGRECTCOORDS(mi.rcMonitor));
 		LogString(szInfo);
 	}
 
@@ -3862,13 +3904,10 @@ bool CConEmuSize::SetWindowMode(ConEmuWindowMode inMode, bool abForce /*= false*
 			inMode = (WindowMode != wmNormal) ? wmNormal : wmMaximized; // FullScreen на Desktop-е невозможен
 	}
 
-	wchar_t szInfo[128];
+	wchar_t szInfo[200];
 
-	if (gpSetCls->isAdvLogging)
-	{
-		_wsprintf(szInfo, SKIPLEN(countof(szInfo)) L"SetWindowMode(%s) begin", GetWindowModeName(inMode));
-		LogString(szInfo);
-	}
+	_wsprintf(szInfo, SKIPLEN(countof(szInfo)) L"SetWindowMode begin: CurMode=%s inMode=%s", GetWindowModeName(GetWindowMode()), GetWindowModeName(inMode));
+	LogString(szInfo);
 
 	if ((inMode != wmFullScreen) && (WindowMode == wmFullScreen))
 	{
@@ -3895,6 +3934,12 @@ bool CConEmuSize::SetWindowMode(ConEmuWindowMode inMode, bool abForce /*= false*
 
 	//WindowPlacement -- использовать нельзя, т.к. он работает в координатах Workspace, а не Screen!
 	RECT rcWnd; GetWindowRect(ghWnd, &rcWnd);
+
+	// Logging purposes
+	MONITORINFO mi = {sizeof(mi)}; HMONITOR hMon = GetNearestMonitorInfo(&mi, NULL, &rcWnd);
+	_wsprintf(szInfo, SKIPLEN(countof(szInfo)) L"SetWindowMode info: Wnd={%i,%i}-{%i,%i} Mon=x%08X Work={%i,%i}-{%i,%i} Full={%i,%i}-{%i,%i}",
+		LOGRECTCOORDS(rcWnd), LODWORD(hMon), LOGRECTCOORDS(mi.rcWork), LOGRECTCOORDS(mi.rcMonitor));
+	LogString(szInfo);
 
 	//bool canEditWindowSizes = false;
 	bool lbRc = false;
@@ -3943,11 +3988,8 @@ bool CConEmuSize::SetWindowMode(ConEmuWindowMode inMode, bool abForce /*= false*
 	mp_ConEmu->GetActiveVCon(&VCon);
 	//CRealConsole* pRCon = (gpSetCls->isAdvLogging!=0) ? (VCon.VCon() ? VCon.VCon()->RCon() : NULL) : NULL;
 
-	if (gpSetCls->isAdvLogging)
-	{
-		_wsprintf(szInfo, SKIPLEN(countof(szInfo)) L"SetWindowMode(%s)", GetWindowModeName(inMode));
-		LogString(szInfo);
-	}
+	_wsprintf(szInfo, SKIPLEN(countof(szInfo)) L"SetWindowMode exec: NewMode=%s", GetWindowModeName(NewMode));
+	LogString(szInfo);
 
 	mp_ConEmu->OnHideCaption(); // inMode из параметров убрал, т.к. WindowMode уже изменен
 
@@ -4707,7 +4749,7 @@ LRESULT CConEmuSize::OnDpiChanged(UINT dpiX, UINT dpiY, LPRECT prcSuggested, boo
 	_wsprintf(szPrefix, SKIPLEN(countof(szPrefix)) bChanged ? L"DpiChanged(%s)" : L"DpiNotChanged(%s)",
 		(src == dcs_Api) ? L"Api" : (src == dcs_Macro) ? L"Mcr" : (src == dcs_Jump) ? L"Jmp" : (src == dcs_Snap) ? L"Snp" : L"Int");
 	_wsprintf(szInfo, SKIPLEN(countof(szInfo)) L"%s: dpi={%u,%u}, rect={%i,%i}-{%i,%i} (%ix%i)",
-		szPrefix, dpiX, dpiY, rc.left, rc.top, rc.right, rc.bottom, rc.right-rc.left, rc.bottom-rc.top);
+		szPrefix, dpiX, dpiY, LOGRECTCOORDS(rc), LOGRECTSIZE(rc));
 
 	/*
 	if (m_JumpMonitor.bInJump || mn_IgnoreSizeChange)
@@ -4971,7 +5013,7 @@ void CConEmuSize::UpdateWindowRgn(int anX/*=-1*/, int anY/*=-1*/, int anWndWidth
 		int nRgn = hRgn ? GetRgnBox(hRgn, &rcBox) : NULLREGION;
 		_wsprintf(szInfo, SKIPLEN(countof(szInfo))
 			nRgn ? L"SetWindowRgn(0x%08X, <%u> {%i,%i}-{%i,%i})" : L"SetWindowRgn(0x%08X, NULL)",
-			ghWnd, nRgn, rcBox.left, rcBox.top, rcBox.right, rcBox.bottom);
+			ghWnd, nRgn, LOGRECTCOORDS(rcBox));
 		LogString(szInfo);
 	}
 
@@ -5215,6 +5257,7 @@ void CConEmuSize::EndSizing(UINT nMouseMsg/*=0*/)
 
 	if (bApplyResize)
 	{
+		LogString(L"EndSizing: Sync console sizes after resize");
 		CVConGroup::SyncConsoleToWindow();
 	}
 
@@ -5263,7 +5306,7 @@ void CConEmuSize::CheckTopMostState()
 			RECT rcWnd = {}; GetWindowRect(ghWnd, &rcWnd);
 			_wsprintf(szInfo, SKIPLEN(countof(szInfo))
 				L"Some external program brought ConEmu OnTop: HWND=x%08X, StyleEx=x%08X, Rect={%i,%i}-{%i,%i}",
-				(DWORD)ghWnd, dwStyleEx, rcWnd.left, rcWnd.top, rcWnd.right, rcWnd.bottom);
+				LODWORD(ghWnd), dwStyleEx, LOGRECTCOORDS(rcWnd));
 			LogString(szInfo);
 		}
 
@@ -5660,7 +5703,7 @@ void CConEmuSize::DoMinimizeRestore(SingleInstanceShowHideType ShowHideType /*= 
 
 	wchar_t szInfo[120];
 	_wsprintf(szInfo, SKIPLEN(countof(szInfo)) L"DoMinimizeRestore(%i) Fore=x%08X Our=%u Iconic=%u Vis=%u",
-		ShowHideType, (DWORD)hCurForeground, bIsForeground, bIsIconic, bVis);
+		ShowHideType, LODWORD(hCurForeground), bIsForeground, bIsIconic, bVis);
 	LogFocusInfo(szInfo);
 
 	if (ShowHideType == sih_QuakeShowHide)

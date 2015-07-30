@@ -1,6 +1,6 @@
 ﻿
 /*
-Copyright (c) 2013-2014 Maximus5
+Copyright (c) 2013-2015 Maximus5
 All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
@@ -99,16 +99,20 @@ struct CEDownloadInfo
 
 typedef void (WINAPI* FDownloadCallback)(const CEDownloadInfo* pError);
 
+#define CEDLOG_MARK_ERROR L"Error: "
+#define CEDLOG_MARK_PROGR L"Progr: "
+#define CEDLOG_MARK_INFO  L"Info:  "
+
 // For internal use only!
 enum CEDownloadCommand
 {
 	// Callbacks. Must be sequental!
-	dc_ErrCallback = 0,     // [0]=FDownloadCallback, [1]=lParam
-	dc_ProgressCallback,    // [0]=FDownloadCallback, [1]=lParam
-	dc_LogCallback,         // [0]=FDownloadCallback, [1]=lParam
+	dc_ErrCallback = 0,     // [0]=FDownloadCallback, [1]=lParam :: CEDLOG_MARK_ERROR
+	dc_ProgressCallback,    // [0]=FDownloadCallback, [1]=lParam :: CEDLOG_MARK_PROGR
+	dc_LogCallback,         // [0]=FDownloadCallback, [1]=lParam :: CEDLOG_MARK_INFO
 	// Commands
 	dc_Init,
-	dc_DownloadFile,        // {IN}  - [0]="http", [1]="DestLocalFilePath", [2]=HANDLE(hDstFile), [3]=abShowAllErrors
+	dc_DownloadFile,        // {IN}  - [0]="http", [1]="DestLocalFilePath", [2]=abShowAllErrors
 	                        // {OUT} - [0]=SizeInBytes, [1] = CRC32
 	dc_DownloadData,        // [0]="http" -- not implemented yet
 	dc_Reset,
@@ -118,20 +122,6 @@ enum CEDownloadCommand
 	dc_RequestTerminate,    // Without args
 	dc_SetAsync,            // [0]=TRUE-Async, FALSE-Sync
 	dc_SetTimeout,          // [0]=type (0-operation, 1-receive), [1]=ms
+	dc_SetAgent,            // [0]="ConEmu Update"
+	dc_SetCmdString,        // [0]="curl -L %1 -o %2"
 };
-
-#if defined(DOWNLOADER_IMPORTS)
-typedef DWORD_PTR (WINAPI* DownloadCommand_t)(CEDownloadCommand cmd, int argc, CEDownloadErrorArg* argv);
-typedef bool (WINAPI* CalcCRC_t)(const BYTE *pData, size_t cchSize, DWORD& crc);
-#else
-#if defined(__GNUC__)
-extern "C"
-{
-#endif
-// For internal use only!
-DWORD_PTR WINAPI DownloadCommand(CEDownloadCommand cmd, int argc, CEDownloadErrorArg* argv);
-bool WINAPI CalcCRC(const BYTE *pData, size_t cchSize, DWORD& crc);
-#if defined(__GNUC__)
-}
-#endif
-#endif

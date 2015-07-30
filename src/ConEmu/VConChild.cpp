@@ -308,10 +308,10 @@ BOOL CConEmuChild::ShowView(int nShowCmd)
 	{
 		if (hChildGUI != NULL)
 			_wsprintf(sInfo, SKIPLEN(countof(sInfo)) L"ShowView: Back=x%08X, DC=x%08X, ChildGUI=x%08X, ShowCMD=%u, ChildVisible=%u",
-				(DWORD)mh_WndBack, (DWORD)mh_WndDC, (DWORD)hChildGUI, nShowCmd, bGuiVisible);
+				LODWORD(mh_WndBack), LODWORD(mh_WndDC), LODWORD(hChildGUI), nShowCmd, bGuiVisible);
 		else
 			_wsprintf(sInfo, SKIPLEN(countof(sInfo)) L"ShowView: Back=x%08X, DC=x%08X, ShowCMD=%u",
-				(DWORD)mh_WndBack, (DWORD)mh_WndDC, nShowCmd);
+				LODWORD(mh_WndBack), LODWORD(mh_WndDC), nShowCmd);
 		gpConEmu->LogString(sInfo);
 	}
 
@@ -438,7 +438,7 @@ LRESULT CConEmuChild::ChildWndProc(HWND hWnd, UINT messg, WPARAM wParam, LPARAM 
 			break;
 		case WM_PAINT:
 			pVCon->mn_WmPaintCounter++;
-			if (gpSetCls->isAdvLogging)
+			if (gpSetCls->isAdvLogging >= 2)
 			{
 				wchar_t szInfo[80];
 				_wsprintf(szInfo, SKIPCOUNT(szInfo) L"VCon[%i] WM_PAINT %u times, %u pending", pVCon->Index(), pVCon->mn_WmPaintCounter, pVCon->mn_InvalidateViewPending);
@@ -448,7 +448,7 @@ LRESULT CConEmuChild::ChildWndProc(HWND hWnd, UINT messg, WPARAM wParam, LPARAM 
 			#ifdef _DEBUG
 			{
 				wchar_t szPos[80]; RECT rcScreen = {}; GetWindowRect(hWnd, &rcScreen);
-				_wsprintf(szPos, SKIPCOUNT(szPos) L"PaintClient VCon[%i] at {%i,%i}-{%i,%i} screen coords", pVCon->Index(), rcScreen.left, rcScreen.top, rcScreen.right, rcScreen.bottom);
+				_wsprintf(szPos, SKIPCOUNT(szPos) L"PaintClient VCon[%i] at {%i,%i}-{%i,%i} screen coords", pVCon->Index(), LOGRECTCOORDS(rcScreen));
 				DEBUGSTRPAINTVCON(szPos);
 			}
 			#endif
@@ -460,7 +460,7 @@ LRESULT CConEmuChild::ChildWndProc(HWND hWnd, UINT messg, WPARAM wParam, LPARAM 
 				#ifdef _DEBUG
 				{
 					wchar_t szPos[80]; RECT rcScreen = {}; GetWindowRect(hWnd, &rcScreen);
-					_wsprintf(szPos, SKIPCOUNT(szPos) L"PrintClient VCon[%i] at {%i,%i}-{%i,%i} screen coords", pVCon->Index(), rcScreen.left, rcScreen.top, rcScreen.right, rcScreen.bottom);
+					_wsprintf(szPos, SKIPCOUNT(szPos) L"PrintClient VCon[%i] at {%i,%i}-{%i,%i} screen coords", pVCon->Index(), LOGRECTCOORDS(rcScreen));
 					DEBUGSTRPAINTVCON(szPos);
 				}
 				#endif
@@ -1079,7 +1079,7 @@ LRESULT CConEmuChild::OnPaintGaps(HDC hdc)
 	#ifdef _DEBUG
 	{
 		wchar_t szPos[80]; RECT rcScreen = {}; GetWindowRect(mh_WndBack, &rcScreen);
-		_wsprintf(szPos, SKIPCOUNT(szPos) L"PaintGaps VCon[%i] at {%i,%i}-{%i,%i} screen coords", mp_VCon->Index(), rcScreen.left, rcScreen.top, rcScreen.right, rcScreen.bottom);
+		_wsprintf(szPos, SKIPCOUNT(szPos) L"PaintGaps VCon[%i] at {%i,%i}-{%i,%i} screen coords", mp_VCon->Index(), LOGRECTCOORDS(rcScreen));
 		DEBUGSTRPAINTGAPS(szPos);
 	}
 	#endif
@@ -1257,7 +1257,7 @@ LRESULT CConEmuChild::OnSize(WPARAM wParam, LPARAM lParam)
 	if (gpSetCls->isAdvLogging)
 	{
 		char szInfo[128];
-		_wsprintfA(szInfo, SKIPLEN(countof(szInfo)) "VCon(0x%08X).OnSize(%ux%u)", (DWORD)mh_WndDC, (UINT)LOWORD(lParam), (UINT)HIWORD(lParam));
+		_wsprintfA(szInfo, SKIPLEN(countof(szInfo)) "VCon(0x%08X).OnSize(%ux%u)", LODWORD(mh_WndDC), (UINT)LOWORD(lParam), (UINT)HIWORD(lParam));
 		gpConEmu->LogString(szInfo);
 	}
 
@@ -1297,7 +1297,7 @@ LRESULT CConEmuChild::OnMove(WPARAM wParam, LPARAM lParam)
 	if (gpSetCls->isAdvLogging)
 	{
 		char szInfo[128];
-		_wsprintfA(szInfo, SKIPLEN(countof(szInfo)) "VCon(0x%08X).OnMove(%ux%u)", (DWORD)mh_WndDC, (int)(short)LOWORD(lParam), (int)(short)HIWORD(lParam));
+		_wsprintfA(szInfo, SKIPLEN(countof(szInfo)) "VCon(0x%08X).OnMove(%ux%u)", LODWORD(mh_WndDC), (int)(short)LOWORD(lParam), (int)(short)HIWORD(lParam));
 		gpConEmu->LogString(szInfo);
 	}
 
@@ -1485,7 +1485,7 @@ void CConEmuChild::InvalidateView()
 			DeleteObject(hRgn);
 		}
 
-		if (l == 1)
+		if ((l == 1) && (gpSetCls->isAdvLogging >= 2))
 		{
 			wchar_t szInfo[80];
 			_wsprintf(szInfo, SKIPCOUNT(szInfo) L"VCon[%i] invalidate called", mp_VCon->Index());

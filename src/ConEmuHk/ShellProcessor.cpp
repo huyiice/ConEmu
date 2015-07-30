@@ -1589,15 +1589,38 @@ int CShellProc::PrepareExecuteParms(
 	// "ConEmuHooks=..." - any other - all enabled
 	CheckHooksDisabled();
 
+	// We need the get executable name before some other checks
+	mn_ImageSubsystem = mn_ImageBits = 0;
+	GetStartingExeName(asFile, asParam, ms_ExeTmp);
+	bool lbGnuDebugger = false;
+
 	// Some additional checks for "Default terminal" mode
 	if (gbPrepareDefaultTerminal)
 	{
+		lbGnuDebugger = IsGDB(ms_ExeTmp); // Allow GDB in Lazarus etc.
+
 		if (aCmd == eCreateProcess)
 		{
-			if (anCreateFlags && ((*anCreateFlags) & (CREATE_NO_WINDOW|DETACHED_PROCESS)))
+			if (anCreateFlags && ((*anCreateFlags) & (CREATE_NO_WINDOW|DETACHED_PROCESS))
+				&& !lbGnuDebugger
+				)
 			{
 				// Creating process without console window, not our case
 				return 0;
+			}
+			// GDB console debugging
+			if (gbIsGdbHost
+				&& (anCreateFlags && ((*anCreateFlags) & (DEBUG_ONLY_THIS_PROCESS|DEBUG_PROCESS)))
+				)
+			{
+				if (FindImageSubsystem(ms_ExeTmp, mn_ImageSubsystem, mn_ImageBits))
+				{
+					if (mn_ImageSubsystem == IMAGE_SUBSYSTEM_WINDOWS_CUI)
+					{
+						mb_DebugWasRequested = true;
+						return 0;
+					}
+				}
 			}
 		}
 		else if (aCmd == eShellExecute)
@@ -1621,7 +1644,9 @@ int CShellProc::PrepareExecuteParms(
 			return 0;
 		}
 
-		if (anShowCmd && (*anShowCmd == SW_HIDE))
+		if (anShowCmd && (*anShowCmd == SW_HIDE)
+			&& !lbGnuDebugger
+			)
 		{
 			// Creating process with window initially hidden, not our case
 			return 0;
@@ -1760,35 +1785,6 @@ int CShellProc::PrepareExecuteParms(
 	//int nActionLen = (asAction ? lstrlen(asAction) : 0)+1;
 	//int nFileLen = (asFile ? lstrlen(asFile) : 0)+1;
 	//int nParamLen = (asParam ? lstrlen(asParam) : 0)+1;
-	BOOL lbNeedCutStartEndQuot = FALSE;
-
-	mn_ImageSubsystem = mn_ImageBits = 0;
-
-	if (/*(aCmd == eShellExecute) &&*/ asFile && *asFile)
-	{
-		if (*asFile == L'"')
-		{
-			LPCWSTR pszEnd = wcschr(asFile+1, L'"');
-			if (pszEnd)
-			{
-				size_t cchLen = (pszEnd - asFile) - 1;
-				ms_ExeTmp.Set(asFile+1, cchLen);
-			}
-			else
-			{
-				ms_ExeTmp.Set(asFile+1);
-			}
-		}
-		else
-		{
-			ms_ExeTmp.Set(asFile);
-		}
-	}
-	else
-	{
-		BOOL lbRootIsCmdExe = FALSE, lbAlwaysConfirmExit = FALSE, lbAutoDisableConfirmExit = FALSE;
-		IsNeedCmd(false, SkipNonPrintable(asParam), ms_ExeTmp, NULL, &lbNeedCutStartEndQuot, &lbRootIsCmdExe, &lbAlwaysConfirmExit, &lbAutoDisableConfirmExit);
-	}
 
 	if (ms_ExeTmp[0])
 	{
@@ -1820,6 +1816,11 @@ int CShellProc::PrepareExecuteParms(
 					{
 						bDebugWasRequested = true;
 					}
+				}
+				else if (lbGnuDebugger)
+				{
+					bDebugWasRequested = true;
+					mb_PostInjectWasRequested = true;
 				}
 			}
 		}
@@ -2287,6 +2288,35 @@ wrap:
 	}
 
 	return lbChanged ? 1 : 0;
+}
+
+void CShellProc::GetStartingExeName(LPCWSTR asFile, LPCWSTR asParam, CmdArg& rsExeTmp)
+{
+	if (asFile && *asFile)
+	{
+		if (*asFile == L'"')
+		{
+			LPCWSTR pszEnd = wcschr(asFile+1, L'"');
+			if (pszEnd)
+			{
+				size_t cchLen = (pszEnd - asFile) - 1;
+				rsExeTmp.Set(asFile+1, cchLen);
+			}
+			else
+			{
+				rsExeTmp.Set(asFile+1);
+			}
+		}
+		else
+		{
+			rsExeTmp.Set(asFile);
+		}
+	}
+	else if (asParam)
+	{
+		BOOL lbRootIsCmdExe = FALSE, lbAlwaysConfirmExit = FALSE, lbAutoDisableConfirmExit = FALSE, lbNeedCutStartEndQuot = FALSE;
+		IsNeedCmd(false, SkipNonPrintable(asParam), rsExeTmp, NULL, &lbNeedCutStartEndQuot, &lbRootIsCmdExe, &lbAlwaysConfirmExit, &lbAutoDisableConfirmExit);
+	}
 }
 
 // returns FALSE if need to block execution

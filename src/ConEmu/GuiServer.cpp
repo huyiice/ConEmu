@@ -79,7 +79,7 @@ bool CGuiServer::Start()
 {
 	// Запустить серверную нить
 	// 120122 - теперь через PipeServer
-	_wsprintf(ms_ServerPipe, SKIPLEN(countof(ms_ServerPipe)) CEGUIPIPENAME, L".", (DWORD)ghWnd); //-V205
+	_wsprintf(ms_ServerPipe, SKIPLEN(countof(ms_ServerPipe)) CEGUIPIPENAME, L".", LODWORD(ghWnd)); //-V205
 
 	mp_GuiServer->SetOverlapped(true);
 	mp_GuiServer->SetLoopCommands(false);
@@ -381,13 +381,13 @@ BOOL CGuiServer::GuiServerCommand(LPVOID pInst, CESERVER_REQ* pIn, CESERVER_REQ*
 		{
 			MCHKHEAP;
 
-			// SRVSTART не приходит если запускается cmd под админом
+			// SRVSTART не приходит если запускается cmd под админом или из Win+G
 			bool lbAllocated = false;
 
 			if (pIn->SrvStartStop.Started == srv_Started)
 			{
 				// Запущен процесс сервера
-				HWND hConWnd = (HWND)pIn->dwData[1];
+				HWND hConWnd = (HWND)(DWORD_PTR)pIn->dwData[1];
 				_ASSERTE(hConWnd && IsWindow(hConWnd));
 
 				DWORD nStartTick = timeGetTime();

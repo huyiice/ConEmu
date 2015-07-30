@@ -87,13 +87,14 @@ THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "../common/StartupEnvEx.h"
 #include "../common/WConsole.h"
 #include "../common/WFiles.h"
+#include "../common/WThreads.h"
 #include "../common/WUser.h"
 #include "../ConEmu/version.h"
 #include "../ConEmuHk/Injects.h"
 #include "ConProcess.h"
 #include "ConsoleHelp.h"
 #include "Debugger.h"
-#include "Downloader.h"
+#include "DownloaderCall.h"
 #include "UnicodeTest.h"
 
 
@@ -151,7 +152,9 @@ MConHandle ghConOut(L"CONOUT$");
 CEStartupEnv* gpStartEnv = NULL;
 HMODULE ghOurModule = NULL; // ConEmuCD.dll
 DWORD   gnSelfPID = 0;
+wchar_t gsModuleName[32] = L"";
 BOOL    gbTerminateOnExit = FALSE;
+bool    gbPrefereSilentMode = false;
 //HANDLE  ghConIn = NULL, ghConOut = NULL;
 HWND    ghConWnd = NULL;
 DWORD   gnConEmuPID = 0; // PID of ConEmu[64].exe (ghConEmuWnd)
@@ -177,6 +180,7 @@ BOOL    gbStopExitWaitForKey = FALSE;
 BOOL    gbCtrlBreakStopWaitingShown = FALSE;
 BOOL    gbTerminateOnCtrlBreak = FALSE;
 BOOL    gbPrintRetErrLevel = FALSE; // Вывести в StdOut код завершения процесса (RM_COMSPEC в основном)
+bool    gbSkipHookersCheck = false;
 int     gnConfirmExitParm = 0; // 1 - CONFIRM, 2 - NOCONFIRM
 BOOL    gbAlwaysConfirmExit = FALSE;
 BOOL    gbAutoDisableConfirmExit = FALSE; // если корневой процесс проработал достаточно (10 сек) - будет сброшен gbAlwaysConfirmExit
@@ -313,6 +317,14 @@ BOOL WINAPI DllMain(HINSTANCE hModule, DWORD ul_reason_for_call, LPVOID lpReserv
 			ghWorkingModule = (u64)hModule;
 			gfnSearchAppPaths = SearchAppPaths;
 
+			wchar_t szExeName[MAX_PATH] = L"", szDllName[MAX_PATH] = L"";
+			GetModuleFileName(NULL, szExeName, countof(szExeName));
+			GetModuleFileName((HMODULE)hModule, szDllName, countof(szDllName));
+			if (IsConsoleServer(PointToName(szExeName)))
+				wcscpy_c(gsModuleName, WIN3264TEST(L"ConEmuC",L"ConEmuC64"));
+			else
+				wcscpy_c(gsModuleName, WIN3264TEST(L"ConEmuCD",L"ConEmuCD64"));
+
 			#ifdef _DEBUG
 			HANDLE hProcHeap = GetProcessHeap();
 			gAllowAssertThread = am_Pipe;
@@ -389,9 +401,6 @@ BOOL WINAPI DllMain(HINSTANCE hModule, DWORD ul_reason_for_call, LPVOID lpReserv
 						gbLogProcess = (pInfo->nLoggingType == glt_Processes);
 						if (gbLogProcess)
 						{
-							wchar_t szExeName[MAX_PATH], szDllName[MAX_PATH]; szExeName[0] = szDllName[0] = 0;
-							GetModuleFileName(NULL, szExeName, countof(szExeName));
-							GetModuleFileName((HMODULE)hModule, szDllName, countof(szDllName));
 							int ImageBits = 0, ImageSystem = 0;
 							#ifdef _WIN64
 							ImageBits = 64;
@@ -793,6 +802,12 @@ void ShowServerStartedMsgBox()
 
 bool CheckAndWarnHookers()
 {
+	if (gbSkipHookersCheck)
+	{
+		if (gpLogSize) gpLogSize->LogString(L"CheckAndWarnHookers skipped due to /SKIPHOOKERS switch");
+		return false;
+	}
+
 	bool bHooked = false;
 	struct CheckModules {
 		LPCWSTR Title, File;
@@ -1457,14 +1472,14 @@ int __stdcall ConsoleMain2(int anWorkMode/*0-Server&ComSpec,1-AltServer,2-Reserv
 
 			#ifdef SHOW_INJECT_MSGBOX
 			wchar_t szDbgMsg[128], szTitle[128];
-			swprintf_c(szTitle, SKIPLEN(countof(szTitle)) L"ConEmuC, PID=%u", GetCurrentProcessId());
+			swprintf_c(szTitle, SKIPLEN(countof(szTitle)) L"%s PID=%u", gsModuleName, GetCurrentProcessId());
 			szDbgMsg[0] = 0;
 			#endif
 
 			if (gbDontInjectConEmuHk)
 			{
 				#ifdef SHOW_INJECT_MSGBOX
-				swprintf_c(szDbgMsg, SKIPLEN(countof(szDbgMsg)) L"ConEmuC, PID=%u\nConEmuHk injects skipped, PID=%u", GetCurrentProcessId(), pi.dwProcessId);
+				swprintf_c(szDbgMsg, SKIPLEN(countof(szDbgMsg)) L"%s PID=%u\nConEmuHk injects skipped, PID=%u", gsModuleName, GetCurrentProcessId(), pi.dwProcessId);
 				#endif
 			}
 			else
@@ -1475,7 +1490,7 @@ int __stdcall ConsoleMain2(int anWorkMode/*0-Server&ComSpec,1-AltServer,2-Reserv
 				TODO("В принципе - завелось, но в сочетании с Anamorphosis получается странное зацикливание far->conemu->anamorph->conemu");
 
 				#ifdef SHOW_INJECT_MSGBOX
-				swprintf_c(szDbgMsg, SKIPLEN(countof(szDbgMsg)) L"ConEmuC, PID=%u\nInjecting hooks into PID=%u", GetCurrentProcessId(), pi.dwProcessId);
+				swprintf_c(szDbgMsg, SKIPLEN(countof(szDbgMsg)) L"%s PID=%u\nInjecting hooks into PID=%u", gsModuleName, GetCurrentProcessId(), pi.dwProcessId);
 				MessageBoxW(NULL, szDbgMsg, szTitle, MB_SYSTEMMODAL);
 				#endif
 
@@ -2966,7 +2981,7 @@ int DoInjectRemote(LPWSTR asCmdArg, bool abDefTermOnly)
 		#if defined(SHOW_ATTACH_MSGBOX)
 		if (!IsDebuggerPresent())
 		{
-			wchar_t szTitle[100]; _wsprintf(szTitle, SKIPLEN(countof(szTitle)) L"ConEmuC (PID=%i) /INJECT", gnSelfPID);
+			wchar_t szTitle[100]; _wsprintf(szTitle, SKIPLEN(countof(szTitle)) L"%s PID=%u /INJECT", gsModuleName, gnSelfPID);
 			const wchar_t* pszCmdLine = GetCommandLineW();
 			MessageBox(NULL,pszCmdLine,szTitle,MB_SYSTEMMODAL);
 		}
@@ -2974,7 +2989,8 @@ int DoInjectRemote(LPWSTR asCmdArg, bool abDefTermOnly)
 
 		// Go to hook
 		// InjectRemote waits for thread termination
-		CINFILTRATE_EXIT_CODES iHookRc = InjectRemote(nRemotePID, abDefTermOnly);
+		DWORD nErrCode = 0;
+		CINFILTRATE_EXIT_CODES iHookRc = InjectRemote(nRemotePID, abDefTermOnly, &nErrCode);
 
 		if (iHookRc == CIR_OK/*0*/ || iHookRc == CIR_AlreadyInjected/*1*/)
 		{
@@ -2992,16 +3008,16 @@ int DoInjectRemote(LPWSTR asCmdArg, bool abDefTermOnly)
 			GetProcessInfo(self.th32ParentProcessID, &parent);
 
 		// Ошибку (пока во всяком случае) лучше показать, для отлова возможных проблем
-		DWORD nErrCode = GetLastError();
 		//_ASSERTE(iHookRc == 0); -- ассерт не нужен, есть MsgBox
 		wchar_t szDbgMsg[255], szTitle[128];
 		_wsprintf(szTitle, SKIPLEN(countof(szTitle))
-			L"ConEmuC[%u], PID=%u", WIN3264TEST(32,64), nSelfPID);
+			L"%s, PID=%u", gsModuleName, nSelfPID);
 		_wsprintf(szDbgMsg, SKIPLEN(countof(szDbgMsg))
-			L"ConEmuC.X, PID=%u\n"
+			L"%s.X, PID=%u\n"
 			L"Injecting remote into PID=%u from ParentPID=%u\n"
 			L"FAILED, code=%i:0x%08X\r\n",
-			nSelfPID, nRemotePID, self.th32ParentProcessID, iHookRc, nErrCode);
+			gsModuleName, nSelfPID,
+			nRemotePID, self.th32ParentProcessID, iHookRc, nErrCode);
 
 		CEStr lsError(lstrmerge(szDbgMsg,
 			L"Process: ",
@@ -3028,6 +3044,7 @@ int DoInjectRemote(LPWSTR asCmdArg, bool abDefTermOnly)
 struct ProcInfo {
 	DWORD nPID, nParentPID;
 	DWORD_PTR Flags;
+	WCHAR szExeFile[64];
 };
 
 int DoExportEnv(LPCWSTR asCmdArg, ConEmuExecAction eExecAction, bool bSilent = false)
@@ -3036,6 +3053,7 @@ int DoExportEnv(LPCWSTR asCmdArg, ConEmuExecAction eExecAction, bool bSilent = f
 	//ProcInfo* pList = NULL;
 	MArray<ProcInfo> List;
 	LPWSTR pszAllVars = NULL, pszSrc;
+	int iVarCount = 0;
 	CESERVER_REQ *pIn = NULL;
 	const DWORD nSelfPID = GetCurrentProcessId();
 	DWORD nTestPID, nParentPID;
@@ -3045,10 +3063,13 @@ int DoExportEnv(LPCWSTR asCmdArg, ConEmuExecAction eExecAction, bool bSilent = f
 	HANDLE h;
 	size_t cchMaxEnvLen = 0;
 	wchar_t* pszBuffer;
+	CEStr szTmpPart;
+	LPCWSTR pszTmpPartStart;
+	LPCWSTR pszCmdArg;
 
 	//_ASSERTE(FALSE && "Continue with exporting environment");
 
-	#define ExpFailedPref "ConEmuC: can't export environment"
+	#define ExpFailedPref WIN3264TEST("ConEmuC","ConEmuC64") ": can't export environment"
 
 	if (!ghConWnd)
 	{
@@ -3089,13 +3110,13 @@ int DoExportEnv(LPCWSTR asCmdArg, ConEmuExecAction eExecAction, bool bSilent = f
 	}
 	pszBuffer = (wchar_t*)pIn->wData;
 
-	asCmdArg = SkipNonPrintable(asCmdArg);
+	pszCmdArg = SkipNonPrintable(asCmdArg);
 
 	//_ASSERTE(FALSE && "Continue to export");
 
 	// Copy variables to buffer
-	if (!asCmdArg || !*asCmdArg || (lstrcmp(asCmdArg, L"*")==0) || (lstrcmp(asCmdArg, L"\"*\"")==0)
-		|| (wcsncmp(asCmdArg, L"* ", 2)==0) || (wcsncmp(asCmdArg, L"\"*\" ", 4)==0))
+	if (!pszCmdArg || !*pszCmdArg || (lstrcmp(pszCmdArg, L"*")==0) || (lstrcmp(pszCmdArg, L"\"*\"")==0)
+		|| (wcsncmp(pszCmdArg, L"* ", 2)==0) || (wcsncmp(pszCmdArg, L"\"*\" ", 4)==0))
 	{
 		// transfer ALL variables, except of ConEmu's internals
 		pszSrc = pszAllVars;
@@ -3119,20 +3140,34 @@ int DoExportEnv(LPCWSTR asCmdArg, ConEmuExecAction eExecAction, bool bSilent = f
 				wmemmove(pszBuffer, pszName, cchAdd);
 				pszBuffer += cchAdd;
 				_ASSERTE(*pszBuffer == 0);
+				iVarCount++;
 			}
 			*pszEq = L'=';
 			pszSrc = pszNext;
 		}
 	}
-	else
+	else while (0==NextArg(&pszCmdArg, szTmpPart, &pszTmpPartStart))
 	{
+		if ((pszTmpPartStart > asCmdArg) && (*(pszTmpPartStart-1) != L'"'))
+		{
+			// Unless the argument name was surrounded by double-quotes
+			// replace commas with spaces, this allows more intuitive
+			// way to run something like this:
+			// ConEmuC -export=ALL SSH_AGENT_PID,SSH_AUTH_SOCK
+			wchar_t* pszComma = szTmpPart.ms_Arg;
+			while ((pszComma = (wchar_t*)wcspbrk(pszComma, L",;")) != NULL)
+			{
+				*pszComma = L' ';
+			}
+		}
+		LPCWSTR pszPart = szTmpPart;
 		CmdArg szTest;
-		while (0==NextArg(&asCmdArg, szTest))
+		while (0==NextArg(&pszPart, szTest))
 		{
 			if (!*szTest || *szTest == L'*')
 			{
 				if (!bSilent)
-					_printf(ExpFailedPref ", invalid name mask\n");
+					_printf(ExpFailedPref ", name masks can't be quoted\n");
 				goto wrap;
 			}
 
@@ -3166,6 +3201,7 @@ int DoExportEnv(LPCWSTR asCmdArg, ConEmuExecAction eExecAction, bool bSilent = f
 						goto wrap;
 					}
 					wmemmove(pszBuffer, pszName, cchAdd);
+					iVarCount++;
 					pszBuffer += cchAdd;
 					_ASSERTE(*pszBuffer == 0);
 					cchLeft -= cchAdd;
@@ -3187,6 +3223,7 @@ int DoExportEnv(LPCWSTR asCmdArg, ConEmuExecAction eExecAction, bool bSilent = f
 				{
 					// Copy "Name\0\0"
 					wmemmove(pszBuffer, szTest, cchAdd);
+					iVarCount++;
 					cchAdd++; // We need second zero after a Name
 					pszBuffer += cchAdd;
 					cchLeft -= cchAdd;
@@ -3244,13 +3281,13 @@ int DoExportEnv(LPCWSTR asCmdArg, ConEmuExecAction eExecAction, bool bSilent = f
 					// On the first step we'll get our parent process
 					nParentPID = PI.th32ParentProcessID;
 				}
-				CharUpperBuff(PI.szExeFile, lstrlen(PI.szExeFile));
 				LPCWSTR pszName = PointToName(PI.szExeFile);
 				ProcInfo pi = {
 					PI.th32ProcessID,
 					PI.th32ParentProcessID,
-					((lstrcmp(pszName, L"CONEMUC.EXE") == 0) || (lstrcmp(pszName, L"CONEMUC64.EXE") == 0)) ? 1 : 0
+					IsConsoleServer(pszName) ? 1 : 0
 				};
+				lstrcpyn(pi.szExeFile, pszName, countof(pi.szExeFile));
 				List.push_back(pi);
 			} while (Process32Next(h, &PI));
 		}
@@ -3266,6 +3303,7 @@ int DoExportEnv(LPCWSTR asCmdArg, ConEmuExecAction eExecAction, bool bSilent = f
 		bool bParentFound = true;
 		while (nParentPID != nSrvPID)
 		{
+			wchar_t szName[64] = L"???";
 			nTestPID = nParentPID;
 			bParentFound = false;
 			// find next parent
@@ -3284,6 +3322,8 @@ int DoExportEnv(LPCWSTR asCmdArg, ConEmuExecAction eExecAction, bool bSilent = f
 						nTestPID = nParentPID;
 						continue;
 					}
+					lstrcpyn(szName, pi.szExeFile, countof(szName));
+					// nTestPID is already pi.nPID
 					bParentFound = true;
 					break;
 				}
@@ -3298,11 +3338,16 @@ int DoExportEnv(LPCWSTR asCmdArg, ConEmuExecAction eExecAction, bool bSilent = f
 				continue; // Useless, we just inherited ALL those variables from our parent
 
 			// Apply environment
-			CESERVER_REQ *pOut = ExecuteHkCmd(nTestPID, pIn, ghConWnd);
+			CESERVER_REQ *pOut = ExecuteHkCmd(nTestPID, pIn, ghConWnd, FALSE, TRUE);
 
 			if (!pOut && !bSilent)
 			{
-				_printf(ExpFailedPref " to PID=%u, check <Inject ConEmuHk>\n", nTestPID);
+				wchar_t szInfo[200];
+				_wsprintf(szInfo, SKIPCOUNT(szInfo)
+					WIN3264TEST(L"ConEmuC",L"ConEmuC64")
+					L": process %s PID=%u was skipped: noninteractive or lack of ConEmuHk\n",
+					szName, nTestPID);
+				_wprintf(szInfo);
 			}
 
 			ExecuteFreeResult(pOut);
@@ -3342,6 +3387,14 @@ int DoExportEnv(LPCWSTR asCmdArg, ConEmuExecAction eExecAction, bool bSilent = f
 		ExecuteGuiCmd(ghConWnd, pIn, ghConWnd, TRUE);
 	}
 
+	if (!bSilent)
+	{
+		wchar_t szVars[80];
+		_wsprintf(szVars, SKIPCOUNT(szVars) WIN3264TEST(L"ConEmuC",L"ConEmuC64") L": %i %s processed\n", iVarCount, (iVarCount == 1) ? L"variable was" : L"variables were");
+		_wprintf(szVars);
+	}
+
+	iRc = 0;
 wrap:
 	// Fin
 	if (pszAllVars)
@@ -3492,8 +3545,7 @@ int DoDownload(LPCWSTR asCmdLine)
 
 		args[0].strArg = pszUrl; args[0].argType = at_Str;
 		args[1].strArg = szArg;  args[1].argType = at_Str;
-		args[2].uintArg = 0;     args[2].argType = at_Uint;
-		args[3].uintArg = TRUE;  args[3].argType = at_Uint;
+		args[2].uintArg = TRUE;  args[2].argType = at_Uint;
 
 		// May be file name was specified relatively or even with env.vars?
 		SafeFree(pszExpanded);
@@ -3503,7 +3555,7 @@ int DoDownload(LPCWSTR asCmdLine)
 			args[1].strArg = szFullPath;
 
 		gbIsDownloading = true;
-		drc = DownloadCommand(dc_DownloadFile, 4, args);
+		drc = DownloadCommand(dc_DownloadFile, 3, args);
 		gbIsDownloading = false;
 		if (drc == 0)
 		{
@@ -4062,7 +4114,7 @@ int DoExecAction(ConEmuExecAction eExecAction, LPCWSTR asCmdArg /* rest of cmdli
 	case ea_ExportGui:
 	case ea_ExportAll:
 		{
-			iRc = DoExportEnv(asCmdArg, eExecAction);
+			iRc = DoExportEnv(asCmdArg, eExecAction, gbPrefereSilentMode);
 			break;
 		}
 	case ea_Download:
@@ -4572,6 +4624,10 @@ int ParseCommandLine(LPCWSTR asCmdLine/*, wchar_t** psNewCmd, BOOL* pbRunInBackg
 			eExecAction = ea_StoreCWD;
 			break;
 		}
+		else if (lstrcmpi(szArg, L"/SILENT")==0)
+		{
+			gbPrefereSilentMode = true;
+		}
 		else if (lstrcmpni(szArg, L"/EXPORT", 7)==0)
 		{
 			//_ASSERTE(FALSE && "Continue to export");
@@ -4621,12 +4677,16 @@ int ParseCommandLine(LPCWSTR asCmdLine/*, wchar_t** psNewCmd, BOOL* pbRunInBackg
 			gnConfirmExitParm = 2;
 			gbAlwaysConfirmExit = FALSE; gbAutoDisableConfirmExit = FALSE;
 		}
+		else if (wcscmp(szArg, L"/SKIPHOOKERS")==0)
+		{
+			gbSkipHookersCheck = true;
+		}
 		else if (wcscmp(szArg, L"/ADMIN")==0)
 		{
 			#if defined(SHOW_ATTACH_MSGBOX)
 			if (!IsDebuggerPresent())
 			{
-				wchar_t szTitle[100]; _wsprintf(szTitle, SKIPLEN(countof(szTitle)) L"ConEmuC (PID=%i) /ADMIN", gnSelfPID);
+				wchar_t szTitle[100]; _wsprintf(szTitle, SKIPLEN(countof(szTitle)) L"%s PID=%u /ADMIN", gsModuleName, gnSelfPID);
 				const wchar_t* pszCmdLine = GetCommandLineW();
 				MessageBox(NULL,pszCmdLine,szTitle,MB_SYSTEMMODAL);
 			}
@@ -4640,7 +4700,7 @@ int ParseCommandLine(LPCWSTR asCmdLine/*, wchar_t** psNewCmd, BOOL* pbRunInBackg
 			#if defined(SHOW_ATTACH_MSGBOX)
 			if (!IsDebuggerPresent())
 			{
-				wchar_t szTitle[100]; _wsprintf(szTitle, SKIPLEN(countof(szTitle)) L"ConEmuC (PID=%i) /ATTACH", gnSelfPID);
+				wchar_t szTitle[100]; _wsprintf(szTitle, SKIPLEN(countof(szTitle)) L"%s PID=%u /ATTACH", gsModuleName, gnSelfPID);
 				const wchar_t* pszCmdLine = GetCommandLineW();
 				MessageBox(NULL,pszCmdLine,szTitle,MB_SYSTEMMODAL);
 			}
@@ -4655,7 +4715,7 @@ int ParseCommandLine(LPCWSTR asCmdLine/*, wchar_t** psNewCmd, BOOL* pbRunInBackg
 			#if defined(SHOW_ATTACH_MSGBOX)
 			if (!IsDebuggerPresent())
 			{
-				wchar_t szTitle[100]; _wsprintf(szTitle, SKIPLEN(countof(szTitle)) L"ConEmuC (PID=%i) /AUTOATTACH", gnSelfPID);
+				wchar_t szTitle[100]; _wsprintf(szTitle, SKIPLEN(countof(szTitle)) L"%s PID=%u %s", gsModuleName, gnSelfPID, szArg.ms_Arg);
 				const wchar_t* pszCmdLine = GetCommandLineW();
 				MessageBox(NULL,pszCmdLine,szTitle,MB_SYSTEMMODAL);
 			}
@@ -4691,7 +4751,7 @@ int ParseCommandLine(LPCWSTR asCmdLine/*, wchar_t** psNewCmd, BOOL* pbRunInBackg
 			#if defined(SHOW_ATTACH_MSGBOX)
 			if (!IsDebuggerPresent())
 			{
-				wchar_t szTitle[100]; _wsprintf(szTitle, SKIPLEN(countof(szTitle)) L"ConEmuC (PID=%i) /GUIATTACH", gnSelfPID);
+				wchar_t szTitle[100]; _wsprintf(szTitle, SKIPLEN(countof(szTitle)) L"%s PID=%u /GUIATTACH", gsModuleName, gnSelfPID);
 				const wchar_t* pszCmdLine = GetCommandLineW();
 				MessageBox(NULL,pszCmdLine,szTitle,MB_SYSTEMMODAL);
 			}
@@ -4865,7 +4925,7 @@ int ParseCommandLine(LPCWSTR asCmdLine/*, wchar_t** psNewCmd, BOOL* pbRunInBackg
 						(DWORD)hSaveCon
 						);
 
-					_wsprintf(szTitle, SKIPLEN(countof(szTitle)) WIN3264TEST(L"ConEmuC",L"ConEmuC64") L": PID=%u", GetCurrentProcessId());
+					_wsprintf(szTitle, SKIPLEN(countof(szTitle)) L"%s: PID=%u", gsModuleName, GetCurrentProcessId());
 
 					int nBtn = MessageBox(NULL, pszMsg, szTitle, MB_ICONSTOP|MB_SYSTEMMODAL|MB_RETRYCANCEL);
 
@@ -6189,7 +6249,7 @@ void SendStarted()
 				gnMainServerPID = nMainServerPID;
 				gnAltServerPID = nAltServerPID;
 				// чтобы не тормозить основной поток (жалобы на замедление запуска программ из батников)
-				ghSendStartedThread = CreateThread(NULL, 0, SendStartedThreadProc, pIn, 0, &gnSendStartedThread);
+				ghSendStartedThread = apiCreateThread(SendStartedThreadProc, pIn, &gnSendStartedThread, "SendStartedThreadProc");
 	  			DWORD nErrCode = ghSendStartedThread ? 0 : GetLastError();
 	  			if (ghSendStartedThread == NULL)
 	  			{
@@ -6402,7 +6462,7 @@ CESERVER_REQ* SendStopped(CONSOLE_SCREEN_BUFFER_INFO* psbi)
 			#pragma warning( push )
 			#pragma warning( disable : 6258 )
 			#endif
-			TerminateThread(ghSendStartedThread, 100);    // раз корректно не хочет...
+			apiTerminateThread(ghSendStartedThread, 100);    // раз корректно не хочет...
 			#ifndef __GNUC__
 			#pragma warning( pop )
 			#endif

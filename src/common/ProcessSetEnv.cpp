@@ -32,12 +32,13 @@ THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "CmdLine.h"
 #include "ProcessSetEnv.h"
 #include "WObjects.h"
+#include "WThreads.h"
 
 //Issue 60: BUGBUG: На некоторых системых (Win2k3, WinXP) SetConsoleCP (и иже с ними) просто зависают
 //Поэтому выполняем в отдельном потоке, и если он завис - просто зовем TerminateThread
 static DWORD WINAPI OurSetConsoleCPThread(LPVOID lpParameter)
 {
-	UINT nCP = (UINT)lpParameter;
+	UINT nCP = LODWORD(lpParameter);
 	SetConsoleCP(nCP);
 	SetConsoleOutputCP(nCP);
 	return 0;
@@ -52,7 +53,7 @@ bool SetConsoleCpHelper(UINT nCP)
 
 	//Issue 60: BUGBUG: On some OS versions (Win2k3, WinXP) SetConsoleCP (and family) just hangs
 	DWORD nTID;
-	HANDLE hThread = CreateThread(NULL, 0, OurSetConsoleCPThread, (LPVOID)nCP, 0, &nTID);
+	HANDLE hThread = apiCreateThread(OurSetConsoleCPThread, (LPVOID)(DWORD_PTR)nCP, &nTID, "OurSetConsoleCPThread(%u)", nCP);
 
 	if (hThread)
 	{
@@ -63,7 +64,7 @@ bool SetConsoleCpHelper(UINT nCP)
 			// That is dangerous operation, however there is no other workaround
 			// http://conemu.github.io/en/MicrosoftBugs.html#chcp_hung
 
-			TerminateThread(hThread,100);
+			apiTerminateThread(hThread, 100);
 
 		}
 
@@ -129,7 +130,8 @@ CProcessEnvCmd::~CProcessEnvCmd()
 }
 
 // May comes from Task or ConEmu's /cmd switch
-void CProcessEnvCmd::AddCommands(LPCWSTR asCommands, LPCWSTR* ppszEnd/*= NULL*/)
+// or from Setting\Environment page where one line is a single command (bAlone == true)
+void CProcessEnvCmd::AddCommands(LPCWSTR asCommands, LPCWSTR* ppszEnd/*= NULL*/, bool bAlone /*= false*/)
 {
 	LPCWSTR lsCmdLine = asCommands;
 	CmdArg lsSet, lsAmp, lsCmd;
@@ -157,15 +159,26 @@ void CProcessEnvCmd::AddCommands(LPCWSTR asCommands, LPCWSTR* ppszEnd/*= NULL*/)
 			// instead of
 			//   set "V1=From Settings"
 			bool bProcessed = false;
-			if (*lsCmdLine != L'"')
+			if ((*lsCmdLine != L'"') || bAlone)
 			{
-				LPCWSTR pszAmp = wcschr(lsCmdLine, L'&');
-				if (!pszAmp) // No ampersand? Use var value as the rest of line
+				LPCWSTR pszAmp = bAlone ? NULL : wcschr(lsCmdLine, L'&');
+				if (!pszAmp) // No ampersand or bAlone? Use var value as the rest of line
 					pszAmp = lsCmdLine + lstrlen(lsCmdLine);
-				// Trim trailing spaces (only \x20)
+				// Set tail pointer
 				LPCWSTR pszValEnd = pszAmp;
+				// Trim trailing spaces (only \x20)
 				while ((pszValEnd > lsCmdLine) && (*(pszValEnd-1) == L' '))
 					pszValEnd--;
+				// Trim possible leading/trailing quotes
+				if (bAlone && (*lsCmdLine == L'"'))
+				{
+					lsCmdLine++;
+					if (((pszValEnd-1) > lsCmdLine) && (*(pszValEnd-1) == L'"'))
+					{
+						_ASSERTE(*pszValEnd == 0);
+						pszValEnd--;
+					}
+				}
 				// OK, return it
 				lsSet.Empty(); // to avoid debug asserts
 				lsSet.Set(lsCmdLine, pszValEnd - lsCmdLine);
@@ -339,7 +352,19 @@ void CProcessEnvCmd::AddLines(LPCWSTR asLines)
 
 	while (0 == NextLine(&pszLines, lsLine))
 	{
-		AddCommands(lsLine);
+		// Skip empty lines
+		LPCWSTR pszLine = SkipNonPrintable(lsLine);
+		if (!pszLine || !*pszLine)
+			continue;
+		// A comment?
+		if ((pszLine[0] == L'#')
+			|| ((pszLine[0] == L'/') && (pszLine[1] == L'/'))
+			|| ((pszLine[0] == L'-') && (pszLine[1] == L'-'))
+			|| (lstrcmpni(pszLine, L"REM ", 4) == 0)
+			)
+			continue;
+		// Process this line
+		AddCommands(pszLine, NULL, true);
 	}
 }
 

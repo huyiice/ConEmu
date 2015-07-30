@@ -1,6 +1,6 @@
 ﻿
 /*
-Copyright (c) 2009-2014 Maximus5
+Copyright (c) 2009-2015 Maximus5
 All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
@@ -41,8 +41,14 @@ THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 //#pragma warning( disable : 4995 )
 #include "../common/common.hpp"
+#include "../common/CmdLine.h"
 
+#include "../ConEmu/version.h"
 #include "../ConEmuCD/ExitCodes.h"
+#include "../ConEmuCD/ConsoleHelp.h"
+
+#include "ConEmuC.h"
+#include "Downloader.h"
 
 PHANDLER_ROUTINE gfHandlerRoutine = NULL;
 
@@ -86,13 +92,175 @@ void UnitTests()
 }
 #endif
 
+bool IsOutputRedirected()
+{
+	static int isRedirected = 0;
+	if (isRedirected)
+	{
+		return (isRedirected == 2);
+	}
+
+	HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
+
+	CONSOLE_SCREEN_BUFFER_INFO sbi = {};
+	BOOL bIsConsole = GetConsoleScreenBufferInfo(hOut, &sbi);
+	if (bIsConsole)
+	{
+		isRedirected = 1;
+		return false;
+	}
+	else
+	{
+		isRedirected = 2;
+		return true;
+	}
+}
+
+void _wprintf(LPCWSTR asBuffer)
+{
+	if (!asBuffer) return;
+
+	int nAllLen = lstrlenW(asBuffer);
+	HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
+	DWORD dwWritten = 0;
+
+	if (!IsOutputRedirected())
+	{
+		WriteConsoleW(hOut, asBuffer, nAllLen, &dwWritten, 0);
+	}
+	else
+	{
+		UINT  cp = GetConsoleOutputCP();
+		int cchMax = WideCharToMultiByte(cp, 0, asBuffer, -1, NULL, 0, NULL, NULL) + 1;
+		char* pszOem = (cchMax > 1) ? (char*)malloc(cchMax) : NULL;
+		if (pszOem)
+		{
+			int nWrite = WideCharToMultiByte(cp, 0, asBuffer, -1, pszOem, cchMax, NULL, NULL);
+			if (nWrite > 1)
+			{
+				// Don't write terminating '\0' to redirected output
+				WriteFile(hOut, pszOem, nWrite-1, &dwWritten, 0);
+			}
+			free(pszOem);
+		}
+	}
+}
+
+void PrintVersion()
+{
+	wchar_t szProgInfo[255], szVer[32];
+	MultiByteToWideChar(CP_ACP, 0, CONEMUVERS, -1, szVer, countof(szVer));
+	_wsprintf(szProgInfo, SKIPLEN(countof(szProgInfo))
+		L"ConEmuC build %s %s. " CECOPYRIGHTSTRING_W L"\n",
+		szVer, WIN3264TEST(L"x86",L"x64"));
+	_wprintf(szProgInfo);
+}
+
+void Help()
+{
+	PrintVersion();
+
+	// See definition in "ConEmuCD/ConsoleHelp.h"
+	_wprintf(pConsoleHelp);
+	_wprintf(pNewConsoleHelp);
+}
+
+bool ProcessCommandLine(int& iRc, HMODULE& hConEmu)
+{
+	LPCWSTR pszCmdLine = GetCommandLineW();
+
+	// If there is '-new_console' or '-cur_console' switches...
+	if (IsNewConsoleArg(pszCmdLine) || IsNewConsoleArg(pszCmdLine, L"-cur_console"))
+		return false;
+
+	HeapInitialize();
+
+	bool bProcessed = false;
+	// Loop through switches to find supported
+	{
+		CEStr lsArg;
+		int iCount = 0;
+		bool bHelpRequested = false;
+		bool bFirst = true;
+		while (NextArg(&pszCmdLine, lsArg) == 0)
+		{
+			if ((lsArg.ms_Arg[0] == L'-') && lsArg.ms_Arg[1] && !wcspbrk(lsArg.ms_Arg+1, L"\\//|.&<>^"))
+			{
+				// Seems this is to be the "switch" too
+				lsArg.ms_Arg[0] = L'/';
+			}
+
+			bool bWasFirst = bFirst; bFirst = false;
+
+			if ((lsArg.ms_Arg[0] != L'/') && bWasFirst)
+			{
+				LPCWSTR pszName = PointToName(lsArg.ms_Arg);
+				if (pszName && (lstrcmpi(pszName, WIN3264TEST(L"ConEmuC.exe",L"ConEmuC64.exe")) == 0))
+					continue;
+			}
+
+			iCount++;
+
+			if ((lsArg.ms_Arg[0] != L'/') && (iCount > 1))
+			{
+				// Some unknown (here) switch, goto full version
+				break;
+			}
+
+			if (lstrcmpi(lsArg, L"/Download") == 0)
+			{
+				iRc = DoDownload(pszCmdLine);
+				// Return '0' on download success for compatibility
+				if (iRc == CERR_DOWNLOAD_SUCCEEDED)
+					iRc = 0;
+				bProcessed = true;
+				break;
+			}
+
+			if ((lstrcmpi(lsArg, L"/?") == 0)
+				|| (lstrcmpi(lsArg, L"/h") == 0)
+				|| (lstrcmpi(lsArg, L"/help") == 0)
+				|| (lstrcmpi(lsArg, L"/-help") == 0)
+				)
+			{
+				bHelpRequested = true;
+				break;
+			};
+
+			// ToDo: /IsConEmu may be processed partially?
+
+			// TODO: Inject remote and standard, DefTerm
+		}
+
+		if (bHelpRequested || (iCount == 0))
+		{
+			if (!hConEmu)
+			{
+				// Prefere Help from ConEmuCD.dll because ConEmuC.exe may be outdated (due to stability preference)
+				hConEmu = LoadLibrary(WIN3264TEST(L"ConEmuCD.dll",L"ConEmuCD64.dll"));
+
+				// Show internal Help variant if only ConEmuCD.dll was failed to load
+				if (hConEmu == NULL)
+				{
+					Help();
+					iRc = CERR_HELPREQUESTED;
+					bProcessed = true;
+				}
+			}
+		}
+	}
+
+	HeapDeinitialize();
+
+	return bProcessed;
+}
 
 int main(int argc, char** argv)
 {
 	int iRc = 0;
-	HMODULE hConEmu;
-	char szErrInfo[512];
-	DWORD dwErr, dwOut;
+	HMODULE hConEmu = NULL;
+	wchar_t szErrInfo[200];
+	DWORD dwErr;
 	typedef int (__stdcall* ConsoleMain2_t)(BOOL abAlternative);
 	ConsoleMain2_t lfConsoleMain2;
 
@@ -112,17 +280,26 @@ int main(int argc, char** argv)
 	UnitTests();
 	#endif
 
+	// Some command we can process internally
+	if (ProcessCommandLine(iRc, hConEmu))
+	{
+		// Done, exiting
+		goto wrap;
+	}
 
-	hConEmu = LoadLibrary(WIN3264TEST(L"ConEmuCD.dll",L"ConEmuCD64.dll"));
+	// Otherwise - do the full cycle
+	if (!hConEmu)
+		hConEmu = LoadLibrary(WIN3264TEST(L"ConEmuCD.dll",L"ConEmuCD64.dll"));
 	dwErr = GetLastError();
 
 	if (!hConEmu)
 	{
-		_wsprintfA(szErrInfo, SKIPLEN(countof(szErrInfo))
-		           "Can't load library \"%s\", ErrorCode=0x%08X\n",
+		_wsprintf(szErrInfo, SKIPLEN(countof(szErrInfo))
+		           L"Can't load library \"%s\", ErrorCode=0x%08X\n",
 		           WIN3264TEST(L"ConEmuCD.dll",L"ConEmuCD64.dll"),
 		           dwErr);
-		WriteConsoleA(GetStdHandle(STD_ERROR_HANDLE), szErrInfo, lstrlenA(szErrInfo), &dwOut, NULL);
+		_wprintf(szErrInfo);
+		_ASSERTE(FALSE && "LoadLibrary failed");
 		iRc = CERR_CONEMUHK_NOTFOUND;
 		goto wrap;
 	}
@@ -134,11 +311,12 @@ int main(int argc, char** argv)
 	if (!lfConsoleMain2 || !gfHandlerRoutine)
 	{
 		dwErr = GetLastError();
-		_wsprintfA(szErrInfo, SKIPLEN(countof(szErrInfo))
-		           "Procedure \"%s\"  not found in library \"%s\"",
-		           lfConsoleMain2 ? "HandlerRoutine" : "ConsoleMain2",
+		_wsprintf(szErrInfo, SKIPLEN(countof(szErrInfo))
+		           L"Procedure \"%s\"  not found in library \"%s\"",
+		           lfConsoleMain2 ? L"HandlerRoutine" : L"ConsoleMain2",
 		           WIN3264TEST(L"ConEmuCD.dll",L"ConEmuCD64.dll"));
-		WriteConsoleA(GetStdHandle(STD_ERROR_HANDLE), szErrInfo, lstrlenA(szErrInfo), &dwOut, NULL);
+		_wprintf(szErrInfo);
+		_ASSERTE(FALSE && "GetProcAddress failed");
 		FreeLibrary(hConEmu);
 		iRc = CERR_CONSOLEMAIN_NOTFOUND;
 		goto wrap;
